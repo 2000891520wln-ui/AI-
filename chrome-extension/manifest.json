@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "AI 灵感手帐",
+  "version": "0.1.0",
+  "description": "右键图片，生成 AI 反推 Prompt 或保存至设计术语手帐。",
+  "permissions": ["contextMenus", "activeTab", "scripting", "storage", "notifications", "tabs"],
+  "host_permissions": ["<all_urls>", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "AI 灵感手帐"
+  }
+}

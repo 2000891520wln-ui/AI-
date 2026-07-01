@@ -3,7 +3,6 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createDb } from "./db/client";
 import type { InspirationImage } from "./db/schema";
@@ -17,8 +16,7 @@ const app = express();
 const port = Number(process.env.PORT || process.env.API_PORT || 8787);
 const host = process.env.API_HOST || "0.0.0.0";
 const store = createStore(createDb());
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const distPath = resolve(__dirname, "..", "dist");
+const distPath = resolve(process.cwd(), "dist");
 
 app.use(cors());
 app.use(express.json({ limit: "14mb" }));

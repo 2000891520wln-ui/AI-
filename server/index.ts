@@ -26,8 +26,10 @@ const createImageSchema = z.object({
   dayIndex: z.number().int().min(0).max(6),
   title: z.string().default("pasted screenshot"),
   imageDataUrl: z.string(),
+  analysisImageDataUrl: z.string().optional(),
   promptTemplate: z.string().optional(),
   asyncAnalysis: z.boolean().optional(),
+  fast: z.boolean().optional(),
   decoration: z.object({
     tape: z.string(),
     pin: z.string(),
@@ -85,6 +87,7 @@ app.post("/api/images", async (req, res, next) => {
     const imageId = randomUUID();
     const storageImage = await uploadImageToStorage({ userId, imageId, imageDataUrl: input.imageDataUrl });
     const storedImageDataUrl = storageImage ? null : input.imageDataUrl;
+    const imageForAnalysis = input.analysisImageDataUrl || input.imageDataUrl;
 
     if (input.asyncAnalysis) {
       const row = await store.create({
@@ -101,7 +104,7 @@ app.post("/api/images", async (req, res, next) => {
         reversePrompt: "AI 正在分析视觉风格并生成反推 prompt..."
       });
 
-      void analyzeDesignImage(input.imageDataUrl, input.promptTemplate)
+      void analyzeDesignImage(imageForAnalysis, input.promptTemplate, { fast: input.fast ?? true })
         .then((analysis) => store.updateAnalysis(row.id, userId, { keywords: analysis.keywords, reversePrompt: analysis.reversePrompt }))
         .catch((error) => {
           const message = error instanceof Error ? error.message : "AI 接口调用失败";
@@ -118,7 +121,7 @@ app.post("/api/images", async (req, res, next) => {
       return;
     }
 
-    const analysis = await analyzeDesignImage(input.imageDataUrl, input.promptTemplate);
+    const analysis = await analyzeDesignImage(imageForAnalysis, input.promptTemplate, { fast: input.fast });
     const row = await store.create({
       id: imageId,
       userId,

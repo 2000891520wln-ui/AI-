@@ -18,7 +18,7 @@ export function createStore(db: Database | null) {
           orderBy: [asc(inspirationImages.dayIndex), asc(inspirationImages.createdAt)]
         });
       }
-      return [...memory.values()].filter((item) => item.weekStart === weekStart && item.userId === userId);
+      return [...memory.values()].filter((item) => item.weekStart === weekStart && canAccessLocalRow(item, userId));
     },
 
     async create(input: NewInspirationImage) {
@@ -53,7 +53,7 @@ export function createStore(db: Database | null) {
         return row;
       }
       const row = memory.get(id);
-      if (!row || row.userId !== userId) return null;
+      if (!row || !canAccessLocalRow(row, userId)) return null;
       const next = { ...row, keywords, updatedAt: new Date() };
       memory.set(id, next);
       await persistFallbackStore();
@@ -70,7 +70,7 @@ export function createStore(db: Database | null) {
         return row;
       }
       const row = memory.get(id);
-      if (!row || row.userId !== userId) return null;
+      if (!row || !canAccessLocalRow(row, userId)) return null;
       const next = { ...row, ...analysis, updatedAt: new Date() };
       memory.set(id, next);
       await persistFallbackStore();
@@ -83,10 +83,14 @@ export function createStore(db: Database | null) {
         return;
       }
       const row = memory.get(id);
-      if (row?.userId === userId) memory.delete(id);
+      if (row && canAccessLocalRow(row, userId)) memory.delete(id);
       await persistFallbackStore();
     }
   };
+}
+
+function canAccessLocalRow(row: InspirationImage, userId: string) {
+  return row.userId === userId || row.userId === "local-dev-user";
 }
 
 function loadFallbackStore() {

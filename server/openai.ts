@@ -116,7 +116,7 @@ async function analyzeWithOpenAI(imageDataUrl: string, promptTemplate?: string, 
           ]
         }
       ],
-      max_output_tokens: options.fast ? 700 : 1200,
+      max_output_tokens: options.fast ? 520 : 1200,
       text: {
         format: {
           type: "json_schema",
@@ -163,6 +163,7 @@ async function analyzeWithGemini(imageDataUrl: string, promptTemplate?: string, 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         generationConfig: {
+          maxOutputTokens: options.fast ? 520 : 1200,
           responseMimeType: "application/json",
           responseSchema: {
             type: "OBJECT",
@@ -275,7 +276,7 @@ async function analyzeWithChatCompletions({
           ]
         }
       ],
-      max_tokens: options?.fast ? 700 : 1200,
+      max_tokens: options?.fast ? 520 : 1200,
       ...(source === "openai-compatible" ? { response_format: { type: "json_object" } } : {})
     })
   });
@@ -291,6 +292,19 @@ async function analyzeWithChatCompletions({
 
 function buildAnalysisPrompt(promptTemplate?: string, options: AnalysisOptions = {}) {
   const template = promptTemplate?.trim() || ORIGINAL_PRODUCT_PROMPT;
+  if (options.fast) {
+    return `${template.slice(0, 1800)}
+
+快速分析这张参考图，输出可直接用于设计灵感板的结果。
+只返回严格 JSON，不要 Markdown，不要解释：
+{
+  "keywords": ["5-10 个具体中文设计术语"],
+  "reversePrompt": "一段英文 AI 生图 prompt，概括画面类型、构图、字体、色彩、材质、印刷/颗粒、元素关系与禁忌"
+}
+
+要求：关键词必须具体，避免“高级、简约、复古、可爱”等泛词；reversePrompt 控制在 90-150 个英文词。`;
+  }
+
   return `${template}
 
 你现在运行在这个应用的上传分析流程中。

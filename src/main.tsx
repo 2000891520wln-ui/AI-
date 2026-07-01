@@ -63,6 +63,7 @@ const tapes = ["#f8d891", "#f0b8a4", "#d7c3ff", "#b8d8bd", "#f5eee2"];
 const pins = ["#d6a316", "#b15b3d", "#6f8d63", "#7b61ff"];
 const clips: Decoration["clip"][] = ["tape", "pin", "clip", "washi"];
 const localStorageKey = "design-terminology-journal";
+const deletedCardsStorageKey = "design-terminology-deleted-cards";
 const positionStorageKey = "design-terminology-card-positions";
 const authTokenStorageKey = "journal-auth-token";
 const columnWidth = 1200;
@@ -285,13 +286,14 @@ function JournalApp() {
   }
 
   async function loadWeek(key: string) {
-    const localRows = readLocal(key).map(resolveLegacyCard);
+    const deletedIds = readDeletedCards();
+    const localRows = readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
     try {
       const response = await fetch(`/api/images?weekStart=${key}`, {
         headers: await getAuthHeaders()
       });
       if (!response.ok) throw new Error("api unavailable");
-      const serverRows = ((await response.json()) as InspirationImage[]).map(resolveLegacyCard);
+      const serverRows = ((await response.json()) as InspirationImage[]).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
       const rows = mergeCards(localRows, serverRows);
       if (rows.length) saveLocal(key, rows);
       return rows;
@@ -304,6 +306,7 @@ function JournalApp() {
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
       const imageDataUrl = await fileToDataUrl(file);
+      const analysisImageDataUrl = await imageDataUrlToAnalysisPreview(imageDataUrl);
       const tempId = `temp-${crypto.randomUUID()}`;
       setCardPositions((current) => {
         if (!current[tempId]) return current;
@@ -331,7 +334,17 @@ function JournalApp() {
         const response = await fetch("/api/images", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
-          body: JSON.stringify({ weekStart: targetWeekKey, dayIndex, title: optimistic.title, imageDataUrl, decoration, promptTemplate, asyncAnalysis: true })
+          body: JSON.stringify({
+            weekStart: targetWeekKey,
+            dayIndex,
+            title: optimistic.title,
+            imageDataUrl,
+            analysisImageDataUrl,
+            decoration,
+            promptTemplate,
+            asyncAnalysis: true,
+            fast: true
+          })
         });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -368,8 +381,8 @@ function JournalApp() {
   }
 
   async function waitForAnalysis(id: string, targetWeekKey: string) {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      await delay(2500);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await delay(attempt < 12 ? 1200 : 2500);
       try {
         const rows = await loadWeek(targetWeekKey);
         const updated = rows.find((item) => item.id === id);
@@ -400,6 +413,7 @@ function JournalApp() {
   }
 
   async function deleteCard(card: InspirationImage) {
+    rememberDeletedCard(card.id);
     const sameDayIds = images.filter((item) => item.weekStart === card.weekStart && item.dayIndex === card.dayIndex).map((item) => item.id);
     setCardPositions((current) => {
       const next = { ...current };
@@ -1065,6 +1079,35 @@ function fileToDataUrl(file: File) {
   });
 }
 
+async function imageDataUrlToAnalysisPreview(imageDataUrl: string) {
+  try {
+    const image = await loadImageElement(imageDataUrl);
+    const maxSide = 900;
+    const ratio = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+    if (ratio >= 1 && imageDataUrl.length < 900_000) return imageDataUrl;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+    const context = canvas.getContext("2d");
+    if (!context) return imageDataUrl;
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.78);
+  } catch {
+    return imageDataUrl;
+  }
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
 async function copyText(text: string, notify?: (message: string) => void, message = "已复制") {
   try {
     if (navigator.clipboard?.writeText) {
@@ -1209,6 +1252,24 @@ function saveLocal(weekKey: string, rows: InspirationImage[]) {
 function persistLocal(weekKey: string, rows: InspirationImage[]) {
   saveLocal(weekKey, rows);
   return rows;
+}
+
+function readDeletedCards() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(deletedCardsStorageKey) || "[]") as string[]);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function rememberDeletedCard(id: string) {
+  const deleted = readDeletedCards();
+  deleted.add(id);
+  try {
+    localStorage.setItem(deletedCardsStorageKey, JSON.stringify([...deleted].slice(-1000)));
+  } catch {
+    // If storage is full, keep the in-memory optimistic deletion; backend remains authoritative.
+  }
 }
 
 function readDefaultPromptTemplate() {

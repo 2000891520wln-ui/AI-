@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -30,10 +31,13 @@ type Decoration = {
 
 type InspirationImage = {
   id: string;
+  userId?: string;
   weekStart: string;
   dayIndex: number;
   title: string;
-  imageDataUrl: string;
+  imageDataUrl?: string | null;
+  imageUrl?: string | null;
+  storagePath?: string | null;
   keywords: string[];
   reversePrompt: string;
   decoration: Decoration;
@@ -47,6 +51,12 @@ type CardPosition = {
   y: number;
 };
 
+type AuthConfig = {
+  enabled?: boolean;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+};
+
 const days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const dayShort = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const tapes = ["#f8d891", "#f0b8a4", "#d7c3ff", "#b8d8bd", "#f5eee2"];
@@ -54,6 +64,7 @@ const pins = ["#d6a316", "#b15b3d", "#6f8d63", "#7b61ff"];
 const clips: Decoration["clip"][] = ["tape", "pin", "clip", "washi"];
 const localStorageKey = "design-terminology-journal";
 const positionStorageKey = "design-terminology-card-positions";
+const authTokenStorageKey = "journal-auth-token";
 const columnWidth = 1200;
 const boardWidth = columnWidth * 7;
 const boardHeight = 3200;
@@ -276,7 +287,9 @@ function JournalApp() {
   async function loadWeek(key: string) {
     const localRows = readLocal(key).map(resolveLegacyCard);
     try {
-      const response = await fetch(`/api/images?weekStart=${key}`);
+      const response = await fetch(`/api/images?weekStart=${key}`, {
+        headers: await getAuthHeaders()
+      });
       if (!response.ok) throw new Error("api unavailable");
       const serverRows = ((await response.json()) as InspirationImage[]).map(resolveLegacyCard);
       const rows = mergeCards(localRows, serverRows);
@@ -317,7 +330,7 @@ function JournalApp() {
       try {
         const response = await fetch("/api/images", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify({ weekStart: targetWeekKey, dayIndex, title: optimistic.title, imageDataUrl, decoration, promptTemplate, asyncAnalysis: true })
         });
         if (!response.ok) {
@@ -381,7 +394,7 @@ function JournalApp() {
     setImages((current) => persistLocal(weekKey, current.map((item) => (item.id === card.id ? { ...item, keywords } : item))));
     await fetch(`/api/images/${card.id}/keywords`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
       body: JSON.stringify({ keywords })
     }).catch(() => undefined);
   }
@@ -395,7 +408,10 @@ function JournalApp() {
       return next;
     });
     setImages((current) => persistLocal(weekKey, current.filter((item) => item.id !== card.id)));
-    await fetch(`/api/images/${card.id}`, { method: "DELETE" }).catch(() => undefined);
+    await fetch(`/api/images/${card.id}`, {
+      method: "DELETE",
+      headers: await getAuthHeaders()
+    }).catch(() => undefined);
   }
 
   return (
@@ -772,7 +788,7 @@ function PolaroidCard({
           }}
           aria-label="拖拽移动图片，点击放大查看"
         >
-          <img className="block h-auto w-full rounded-[1px]" draggable={false} src={card.imageDataUrl} alt={card.title} />
+          <img className="block h-auto w-full rounded-[1px]" draggable={false} src={getCardImageSrc(card)} alt={card.title} />
         </button>
         <button
           className="image-float-button absolute left-1/2 top-1/2 z-20 grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-zinc-700 opacity-0 transition group-hover:opacity-100 dark:text-zinc-100"
@@ -890,7 +906,7 @@ function ImagePreviewDialog({
           </button>
           <img
             className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-            src={card.imageDataUrl}
+            src={getCardImageSrc(card)}
             alt={card.title}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -908,7 +924,7 @@ function ImagePreviewDialog({
                 className="block w-full rounded-lg px-3 py-2 text-left hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80"
                 onClick={() => {
                   setImageMenu(null);
-                  void copyImageToClipboard(card.imageDataUrl, onCopy);
+                  void copyImageToClipboard(getCardImageSrc(card), onCopy);
                 }}
               >
                 复制图片
@@ -1067,18 +1083,26 @@ async function copyText(text: string, notify?: (message: string) => void, messag
   }
 }
 
-async function copyImageToClipboard(imageDataUrl: string, notify?: (message: string) => void) {
+async function copyImageToClipboard(imageSrc: string, notify?: (message: string) => void) {
   try {
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("image clipboard unavailable");
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": imageDataUrlToPngBlob(imageDataUrl) })]);
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": imageSrcToPngBlob(imageSrc) })]);
     notify?.("图片已复制");
   } catch {
     notify?.("图片复制失败，请重试");
   }
 }
 
-async function imageDataUrlToPngBlob(imageDataUrl: string) {
-  const image = await loadImage(imageDataUrl);
+async function imageSrcToPngBlob(imageSrc: string) {
+  if (!imageSrc.startsWith("data:")) {
+    const response = await fetch(imageSrc);
+    if (!response.ok) throw new Error("image download failed");
+    const blob = await response.blob();
+    if (blob.type === "image/png") return blob;
+    imageSrc = URL.createObjectURL(blob);
+  }
+
+  const image = await loadImage(imageSrc);
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth || image.width;
   canvas.height = image.naturalHeight || image.height;
@@ -1088,6 +1112,44 @@ async function imageDataUrlToPngBlob(imageDataUrl: string) {
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("image conversion failed"))), "image/png");
   });
+}
+
+function getCardImageSrc(card: InspirationImage) {
+  return card.imageUrl || card.imageDataUrl || "";
+}
+
+let supabaseClient: SupabaseClient | null = null;
+let authConfigPromise: Promise<AuthConfig> | null = null;
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const config = await getAuthConfig();
+  if (!config.enabled || !config.supabaseUrl || !config.supabaseAnonKey) return {};
+
+  supabaseClient ||= createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      storageKey: "journal-supabase-auth"
+    }
+  });
+
+  const currentSession = await supabaseClient.auth.getSession();
+  let session = currentSession.data.session;
+  if (!session) {
+    const { data, error } = await supabaseClient.auth.signInAnonymously();
+    if (error) throw new Error(`匿名登录失败：${error.message}`);
+    session = data.session;
+  }
+
+  const accessToken = session?.access_token;
+  if (!accessToken) throw new Error("匿名登录没有返回有效 token");
+  localStorage.setItem(authTokenStorageKey, accessToken);
+  return { Authorization: `Bearer ${accessToken}` };
+}
+
+function getAuthConfig(): Promise<AuthConfig> {
+  authConfigPromise ||= fetch("/api/auth/config").then((response) => response.json()).catch(() => ({ enabled: false }));
+  return authConfigPromise;
 }
 
 function loadImage(src: string) {

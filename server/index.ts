@@ -1,11 +1,14 @@
 import cors from "cors";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { createDb } from "./db/client";
+import type { InspirationImage } from "./db/schema";
 import { analyzeDesignImage, getAiStatus } from "./openai";
 import { createStore } from "./store";
+import { createSignedImageUrl, getUserIdFromAuthHeader, uploadImageToStorage } from "./supabase";
 
 loadEnvFile();
 
@@ -41,10 +44,19 @@ const analyzeImageSchema = z.object({
 app.get("/api/images", async (req, res, next) => {
   try {
     const weekStart = String(req.query.weekStart || "");
-    res.json(await store.listByWeek(weekStart));
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    res.json(await withSignedImageUrls(await store.listByWeek(weekStart, userId)));
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/auth/config", (_req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || "",
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
+    enabled: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+  });
 });
 
 app.get("/api/ai/status", (_req, res) => {
@@ -67,30 +79,39 @@ app.post("/api/analyze-image", async (req, res, next) => {
 
 app.post("/api/images", async (req, res, next) => {
   try {
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
     const input = createImageSchema.parse(req.body);
+    const imageId = randomUUID();
+    const storageImage = await uploadImageToStorage({ userId, imageId, imageDataUrl: input.imageDataUrl });
+    const storedImageDataUrl = storageImage ? null : input.imageDataUrl;
+
     if (input.asyncAnalysis) {
       const row = await store.create({
+        id: imageId,
+        userId,
         weekStart: input.weekStart,
         dayIndex: input.dayIndex,
         title: input.title,
-        imageDataUrl: input.imageDataUrl,
+        imageDataUrl: storedImageDataUrl,
+        imageUrl: storageImage?.imageUrl || null,
+        storagePath: storageImage?.storagePath || null,
         decoration: input.decoration,
         keywords: ["分析中"],
         reversePrompt: "AI 正在分析视觉风格并生成反推 prompt..."
       });
 
       void analyzeDesignImage(input.imageDataUrl, input.promptTemplate)
-        .then((analysis) => store.updateAnalysis(row.id, { keywords: analysis.keywords, reversePrompt: analysis.reversePrompt }))
+        .then((analysis) => store.updateAnalysis(row.id, userId, { keywords: analysis.keywords, reversePrompt: analysis.reversePrompt }))
         .catch((error) => {
           const message = error instanceof Error ? error.message : "AI 接口调用失败";
-          return store.updateAnalysis(row.id, {
+          return store.updateAnalysis(row.id, userId, {
             keywords: ["AI 未连接"],
             reversePrompt: `AI 接口未完成：${message}`
           });
         });
 
       res.status(202).json({
-        ...row,
+        ...(await withSignedImageUrl(row)),
         analysisNote: "已保存，AI 正在分析"
       });
       return;
@@ -98,10 +119,14 @@ app.post("/api/images", async (req, res, next) => {
 
     const analysis = await analyzeDesignImage(input.imageDataUrl, input.promptTemplate);
     const row = await store.create({
+      id: imageId,
+      userId,
       weekStart: input.weekStart,
       dayIndex: input.dayIndex,
       title: input.title,
-      imageDataUrl: input.imageDataUrl,
+      imageDataUrl: storedImageDataUrl,
+      imageUrl: storageImage?.imageUrl || null,
+      storagePath: storageImage?.storagePath || null,
       decoration: input.decoration,
       keywords: analysis.keywords,
       reversePrompt: analysis.reversePrompt
@@ -113,7 +138,7 @@ app.post("/api/images", async (req, res, next) => {
       "openai-compatible": "兼容模型"
     }[analysis.source];
     res.status(201).json({
-      ...row,
+      ...(await withSignedImageUrl(row)),
       analysisNote: `${providerLabel} 已生成`
     });
   } catch (error) {
@@ -123,10 +148,11 @@ app.post("/api/images", async (req, res, next) => {
 
 app.patch("/api/images/:id/keywords", async (req, res, next) => {
   try {
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
     const keywords = z.array(z.string()).parse(req.body.keywords);
-    const row = await store.updateKeywords(req.params.id, keywords);
+    const row = await store.updateKeywords(req.params.id, userId, keywords);
     if (!row) return res.status(404).json({ error: "图片不存在" });
-    res.json(row);
+    res.json(await withSignedImageUrl(row));
   } catch (error) {
     next(error);
   }
@@ -134,7 +160,8 @@ app.patch("/api/images/:id/keywords", async (req, res, next) => {
 
 app.delete("/api/images/:id", async (req, res, next) => {
   try {
-    await store.remove(req.params.id);
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    await store.remove(req.params.id, userId);
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -166,4 +193,16 @@ function loadEnvFile() {
     const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
     if (key && process.env[key] === undefined) process.env[key] = value;
   }
+}
+
+async function withSignedImageUrls(rows: InspirationImage[]) {
+  return Promise.all(rows.map((row) => withSignedImageUrl(row)));
+}
+
+async function withSignedImageUrl(row: InspirationImage) {
+  if (!row.storagePath) return row;
+  return {
+    ...row,
+    imageUrl: await createSignedImageUrl(row.storagePath)
+  };
 }

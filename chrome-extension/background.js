@@ -159,10 +159,10 @@ async function optimizePromptImage(imageDataUrl) {
   }
 }
 
-async function postJson(url, payload) {
+async function postJson(url, payload, headers = {}) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(payload)
   });
   const body = await response.json().catch(() => ({}));
@@ -175,16 +175,52 @@ async function postJson(url, payload) {
 async function postApi(settings, path, payload) {
   const bases = getApiBases(settings);
   const errors = [];
+  const authHeaders = await getJournalAuthHeaders(settings);
 
   for (const base of bases) {
     try {
-      return await postJson(`${base}${path}`, payload);
+      return await postJson(`${base}${path}`, payload, authHeaders);
     } catch (error) {
       errors.push(`${base}: ${errorMessage(error)}`);
     }
   }
 
   throw new Error(`所有接口都调用失败：${errors.join("；") || "没有可用地址"}`);
+}
+
+async function getJournalAuthHeaders(settings) {
+  const token = await readJournalAuthToken(settings).catch(() => "");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function readJournalAuthToken(settings) {
+  const candidates = unique([settings.appUrl, DEFAULT_SETTINGS.appUrl, "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176"]);
+  const tabs = await chrome.tabs.query({});
+
+  for (const appUrl of candidates) {
+    const appOrigin = originOf(appUrl);
+    if (!appOrigin) continue;
+    const tab = tabs.find((item) => item.id && item.url?.startsWith(appOrigin));
+    if (!tab?.id) continue;
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (key) => localStorage.getItem(key) || "",
+      args: ["journal-auth-token"]
+    });
+    const token = results?.[0]?.result;
+    if (token) return token;
+  }
+
+  return "";
+}
+
+function originOf(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return "";
+  }
 }
 
 async function analyzePrompt(settings, imageDataUrl, srcUrl) {

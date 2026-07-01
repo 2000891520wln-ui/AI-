@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -11,14 +11,14 @@ let persistQueue = Promise.resolve();
 
 export function createStore(db: Database | null) {
   return {
-    async listByWeek(weekStart: string) {
+    async listByWeek(weekStart: string, userId: string) {
       if (db) {
         return db.query.inspirationImages.findMany({
-          where: eq(inspirationImages.weekStart, weekStart),
+          where: and(eq(inspirationImages.weekStart, weekStart), eq(inspirationImages.userId, userId)),
           orderBy: [asc(inspirationImages.dayIndex), asc(inspirationImages.createdAt)]
         });
       }
-      return [...memory.values()].filter((item) => item.weekStart === weekStart);
+      return [...memory.values()].filter((item) => item.weekStart === weekStart && item.userId === userId);
     },
 
     async create(input: NewInspirationImage) {
@@ -31,7 +31,10 @@ export function createStore(db: Database | null) {
         id: crypto.randomUUID(),
         createdAt: now,
         updatedAt: now,
+        imageUrl: null,
+        storagePath: null,
         ...input,
+        userId: input.userId || "local-dev-user",
         keywords: input.keywords || [],
         reversePrompt: input.reversePrompt || ""
       } as InspirationImage;
@@ -40,46 +43,47 @@ export function createStore(db: Database | null) {
       return row;
     },
 
-    async updateKeywords(id: string, keywords: string[]) {
+    async updateKeywords(id: string, userId: string, keywords: string[]) {
       if (db) {
         const [row] = await db
           .update(inspirationImages)
           .set({ keywords, updatedAt: new Date() })
-          .where(eq(inspirationImages.id, id))
+          .where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)))
           .returning();
         return row;
       }
       const row = memory.get(id);
-      if (!row) return null;
+      if (!row || row.userId !== userId) return null;
       const next = { ...row, keywords, updatedAt: new Date() };
       memory.set(id, next);
       await persistFallbackStore();
       return next;
     },
 
-    async updateAnalysis(id: string, analysis: { keywords: string[]; reversePrompt: string }) {
+    async updateAnalysis(id: string, userId: string, analysis: { keywords: string[]; reversePrompt: string }) {
       if (db) {
         const [row] = await db
           .update(inspirationImages)
           .set({ ...analysis, updatedAt: new Date() })
-          .where(eq(inspirationImages.id, id))
+          .where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)))
           .returning();
         return row;
       }
       const row = memory.get(id);
-      if (!row) return null;
+      if (!row || row.userId !== userId) return null;
       const next = { ...row, ...analysis, updatedAt: new Date() };
       memory.set(id, next);
       await persistFallbackStore();
       return next;
     },
 
-    async remove(id: string) {
+    async remove(id: string, userId: string) {
       if (db) {
-        await db.delete(inspirationImages).where(eq(inspirationImages.id, id));
+        await db.delete(inspirationImages).where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)));
         return;
       }
-      memory.delete(id);
+      const row = memory.get(id);
+      if (row?.userId === userId) memory.delete(id);
       await persistFallbackStore();
     }
   };
@@ -94,6 +98,9 @@ function loadFallbackStore() {
     for (const row of parsed) {
       rows.set(row.id, {
         ...row,
+        userId: row.userId || "local-dev-user",
+        imageUrl: row.imageUrl || null,
+        storagePath: row.storagePath || null,
         createdAt: new Date(row.createdAt),
         updatedAt: new Date(row.updatedAt)
       });

@@ -173,7 +173,8 @@ app.delete("/api/images/:id", async (req, res, next) => {
 
 if (existsSync(distPath)) {
   app.use(express.static(distPath));
-  app.get("*", (_req, res) => {
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/")) return next();
     res.sendFile(resolve(distPath, "index.html"));
   });
 }

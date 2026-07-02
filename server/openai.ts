@@ -48,6 +48,10 @@ type AnalysisOptions = {
 };
 
 export async function analyzeDesignImage(imageDataUrl: string, promptTemplate?: string, options: AnalysisOptions = {}): Promise<GptAnalysis> {
+  if (/^https?:\/\//i.test(imageDataUrl)) {
+    imageDataUrl = await remoteImageToDataUrl(imageDataUrl);
+  }
+
   if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(imageDataUrl)) {
     throw new Error("图片格式不正确，请上传截图或图片文件");
   }
@@ -57,6 +61,19 @@ export async function analyzeDesignImage(imageDataUrl: string, promptTemplate?: 
   if (provider === "volcengine" || provider === "ark" || provider === "doubao") return analyzeWithVolcengine(imageDataUrl, promptTemplate, options);
   if (provider === "openai-compatible" || provider === "compatible") return analyzeWithOpenAICompatible(imageDataUrl, promptTemplate, options);
   return analyzeWithOpenAI(imageDataUrl, promptTemplate, options);
+}
+
+async function remoteImageToDataUrl(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("图片下载失败，无法重新分析");
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) throw new Error("图片链接格式不正确，无法重新分析");
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > 14 * 1024 * 1024) throw new Error("图片过大，无法重新分析");
+
+  return `data:${contentType.split(";")[0]};base64,${bytes.toString("base64")}`;
 }
 
 export function getAiStatus() {

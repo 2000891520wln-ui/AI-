@@ -541,10 +541,10 @@ body {
 
 @keyframes gallery-scene-drift {
   0% {
-    left: -300px;
+    left: -800px;
   }
   100% {
-    left: 300px;
+    left: 800px;
   }
 }
 

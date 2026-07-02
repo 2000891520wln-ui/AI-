@@ -175,13 +175,13 @@ function JournalApp() {
   }, [images]);
 
   const disconnectedAnalysisSignature = images
-    .filter((card) => card.keywords.includes("AI 未连接") && Boolean(getCardImageSrc(card)))
+    .filter((card) => needsAnalysisRetry(card) && Boolean(getCardImageSrc(card)))
     .map((card) => card.id)
     .join("|");
 
   React.useEffect(() => {
     const retryableCards = images.filter(
-      (card) => card.keywords.includes("AI 未连接") && Boolean(getCardImageSrc(card)) && !analysisRetryIdsRef.current.has(card.id)
+      (card) => needsAnalysisRetry(card) && Boolean(getCardImageSrc(card)) && !analysisRetryIdsRef.current.has(card.id)
     );
     if (!retryableCards.length) return;
 
@@ -781,6 +781,10 @@ function JournalApp() {
     setSearchLoading(false);
   }
 
+  function imagesForDay(dayIndex: number) {
+    return sortCardsForDay(images.filter((image) => image.dayIndex === dayIndex));
+  }
+
   return (
     <main className={cn("hand-drawn-ui min-h-screen overflow-hidden bg-background text-foreground", `ui-style-${uiStyle}`)}>
       <div className="journal-grain" />
@@ -962,7 +966,7 @@ function JournalApp() {
                   key={formatKey(date)}
                   date={date}
                   dayIndex={dayIndex}
-                  images={images.filter((image) => image.dayIndex === dayIndex)}
+                  images={imagesForDay(dayIndex)}
                   onFiles={addFiles}
                   onDeleteCard={deleteCard}
                   onDeleteKeyword={deleteKeyword}
@@ -1759,8 +1763,12 @@ function resolveLegacyCard(card: InspirationImage): InspirationImage {
     ...card,
     keywords: ["AI 未连接"],
     reversePrompt: "这张卡片之前使用了无关的本地兜底术语。请配置 GPT/Gemini API Key 后重新上传，才能得到真实图片分析。",
-    analysisNote: card.analysisNote || "旧的无关兜底结果已隐藏"
+    analysisNote: card.analysisNote || "旧的无关兜底结果已隐藏，AI 恢复后会自动重试"
   };
+}
+
+function needsAnalysisRetry(card: InspirationImage) {
+  return card.keywords.includes("AI 未连接") || card.analysisNote?.includes("旧的无关兜底结果");
 }
 
 function isLegacyFallback(keywords: string[], reversePrompt: string) {
@@ -2060,6 +2068,18 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
 
 function timestampOf(value?: string) {
   return value ? new Date(value).getTime() : 0;
+}
+
+function sortCardsForDay(cards: InspirationImage[]) {
+  return cards
+    .map((card, index) => ({ card, index }))
+    .sort((left, right) => {
+      const leftTime = timestampOf(left.card.createdAt || left.card.updatedAt);
+      const rightTime = timestampOf(right.card.createdAt || right.card.updatedAt);
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return left.index - right.index;
+    })
+    .map(({ card }) => card);
 }
 
 function sameCards(left: InspirationImage[], right: InspirationImage[]) {

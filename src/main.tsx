@@ -32,6 +32,7 @@ type Decoration = {
 
 type InspirationImage = {
   id: string;
+  clientId?: string;
   userId?: string;
   weekStart: string;
   dayIndex: number;
@@ -117,6 +118,9 @@ function JournalApp() {
   const canvasPanRef = React.useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const centeredWeekRef = React.useRef<string | null>(null);
   const zoomAnchorRef = React.useRef<{ pointerX: number; pointerY: number; worldX: number; worldY: number } | null>(null);
+  const pendingCreateIdsRef = React.useRef(new Set<string>());
+  const deletedCardIdsRef = React.useRef(readDeletedCards());
+  const recentPasteSignatureRef = React.useRef<{ signature: string; at: number } | null>(null);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
   const weekDates = React.useMemo(() => days.map((_, index) => addDays(weekStart, index)), [weekStart]);
@@ -134,12 +138,8 @@ function JournalApp() {
   React.useEffect(() => {
     const syncWeek = () => {
       if (document.hidden) return;
-      void loadWeek(weekKey).then((rows) => {
-        setImages((current) => {
-          if (sameCards(current, rows)) return current;
-          return persistLocal(weekKey, rows);
-        });
-      });
+      if (pendingCreateIdsRef.current.size > 0) return;
+      void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey));
     };
     const timer = window.setInterval(syncWeek, 2500);
     window.addEventListener("ai-journal-sync", syncWeek);
@@ -228,6 +228,14 @@ function JournalApp() {
 
       const files = imageFilesFromClipboard(event.clipboardData);
       if (!files.length) return;
+      const signature = files.map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`).join("|");
+      const previousPaste = recentPasteSignatureRef.current;
+      const now = Date.now();
+      if (previousPaste && previousPaste.signature === signature && now - previousPaste.at < 1200) {
+        event.preventDefault();
+        return;
+      }
+      recentPasteSignatureRef.current = { signature, at: now };
       event.preventDefault();
       void addFilesToToday(files);
     };
@@ -280,6 +288,16 @@ function JournalApp() {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     setToast(message);
     toastTimerRef.current = window.setTimeout(() => setToast(null), 1500);
+  }
+
+  function applySyncedRows(rows: InspirationImage[], targetWeekKey = weekKey) {
+    setImages((current) => {
+      const protectedRows = current.filter((item) => item.weekStart === targetWeekKey && (pendingCreateIdsRef.current.has(item.id) || item.id.startsWith("temp-")));
+      const deletedIds = currentDeletedCards(deletedCardIdsRef);
+      const nextRows = mergeCards(protectedRows, rows).filter((item) => !deletedIds.has(item.id));
+      if (sameCards(current, nextRows)) return current;
+      return persistLocal(targetWeekKey, nextRows);
+    });
   }
 
   function handleTouchStart(event: React.TouchEvent<HTMLElement>) {
@@ -338,7 +356,7 @@ function JournalApp() {
   }
 
   async function loadWeek(key: string) {
-    const deletedIds = readDeletedCards();
+    const deletedIds = currentDeletedCards(deletedCardIdsRef);
     const localRows = readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
     try {
       const response = await fetch(`/api/images?weekStart=${key}`, {
@@ -358,8 +376,8 @@ function JournalApp() {
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
       const imageDataUrl = await fileToDataUrl(file);
-      const analysisImageDataUrl = await imageDataUrlToAnalysisPreview(imageDataUrl);
       const tempId = `temp-${crypto.randomUUID()}`;
+      pendingCreateIdsRef.current.add(tempId);
       setCardPositions((current) => {
         if (!current[tempId]) return current;
         const next = { ...current };
@@ -368,8 +386,10 @@ function JournalApp() {
         return next;
       });
       const decoration = randomDecoration();
+      const now = new Date().toISOString();
       const optimistic: InspirationImage = {
         id: tempId,
+        clientId: tempId,
         weekStart: targetWeekKey,
         dayIndex,
         title: file.name || "pasted screenshot",
@@ -377,12 +397,15 @@ function JournalApp() {
         decoration,
         keywords: ["分析中"],
         reversePrompt: "AI 正在分析视觉风格并生成反推 prompt...",
-        analysisNote: "正在调用 AI"
+        analysisNote: "正在调用 AI",
+        createdAt: now,
+        updatedAt: now
       };
       setImages((current) => persistLocal(targetWeekKey, [...current, optimistic]));
       setPending((current) => ({ ...current, [tempId]: true }));
 
       try {
+        const analysisImageDataUrl = await imageDataUrlToAnalysisPreview(imageDataUrl);
         const response = await fetch("/api/images", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
@@ -403,12 +426,22 @@ function JournalApp() {
           throw new Error(body.error || "AI 分析接口调用失败");
         }
         const resolved = (await response.json()) as InspirationImage;
+        pendingCreateIdsRef.current.delete(tempId);
         setImages((current) =>
           persistLocal(
             targetWeekKey,
-            current.map((item) => (item.id === tempId ? { ...resolved, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" } : item))
+            current.map((item) =>
+              item.id === tempId ? { ...resolved, clientId: tempId, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" } : item
+            )
           )
         );
+        setCardPositions((current) => {
+          if (!current[tempId]) return current;
+          const next = { ...current, [resolved.id]: current[tempId] };
+          delete next[tempId];
+          savePositions(next);
+          return next;
+        });
         if (isAnalyzingCard(resolved)) {
           void waitForAnalysis(resolved.id, targetWeekKey);
         }
@@ -417,12 +450,14 @@ function JournalApp() {
         const fallback = {
           ...optimistic,
           id: crypto.randomUUID(),
+          clientId: tempId,
           keywords: ["AI 未连接"],
           reversePrompt: "没有配置可用的 GPT/Gemini API Key，应用无法根据图片生成真实关键词和 prompt。",
           analysisNote: `AI 接口未完成：${message}`
         };
         setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === tempId ? fallback : item))));
       } finally {
+        pendingCreateIdsRef.current.delete(tempId);
         setPending((current) => {
           const next = { ...current };
           delete next[tempId];
@@ -465,6 +500,7 @@ function JournalApp() {
   }
 
   async function deleteCard(card: InspirationImage) {
+    deletedCardIdsRef.current.add(card.id);
     rememberDeletedCard(card.id);
     const sameDayIds = images.filter((item) => item.weekStart === card.weekStart && item.dayIndex === card.dayIndex).map((item) => item.id);
     setCardPositions((current) => {
@@ -643,7 +679,7 @@ function JournalApp() {
                 onOpenPreview={setActiveCard}
                 onMoveCard={moveCard}
                 onCopy={notify}
-                onImageLoadError={() => void loadWeek(weekKey).then(setImages)}
+                onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
                 cardPositions={cardPositions}
                 canvasScale={canvasScale}
                 pending={pending}
@@ -672,7 +708,7 @@ function JournalApp() {
         onClose={() => setActiveCard(null)}
         onDeleteKeyword={deleteKeyword}
         onCopy={notify}
-        onImageLoadError={() => void loadWeek(weekKey).then(setImages)}
+        onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
       />
     </main>
   );
@@ -749,7 +785,7 @@ function DayColumn({
         <AnimatePresence>
           {images.map((image, index) => (
             <PolaroidCard
-              key={image.id}
+              key={image.clientId || image.id}
               card={image}
               index={index}
               loading={Boolean(pending[image.id])}
@@ -876,7 +912,11 @@ function PolaroidCard({
   canvasScale: number;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [imageLoaded, setImageLoaded] = React.useState(false);
+  const [displayImageSrc, setDisplayImageSrc] = React.useState("");
   const cardRef = React.useRef<HTMLElement | null>(null);
+  const displayImageSrcRef = React.useRef("");
+  const onImageLoadErrorRef = React.useRef(onImageLoadError);
   const closeTimerRef = React.useRef<number | null>(null);
   const dragRef = React.useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const latestPositionRef = React.useRef<CardPosition>({ x: 0, y: 0 });
@@ -885,8 +925,45 @@ function PolaroidCard({
   const first = card.keywords[0] || "未命名术语";
   const extra = Math.max(0, card.keywords.length - 1);
   const layout = cardLayout(index);
+  const imageSrc = getCardImageSrc(card);
+  const imagePlaceholderHeight = Math.round(layout.width * 1.28);
   const activePosition = draftPosition || position || { x: 0, y: 0 };
   latestPositionRef.current = activePosition;
+  React.useEffect(() => {
+    displayImageSrcRef.current = displayImageSrc;
+  }, [displayImageSrc]);
+  React.useEffect(() => {
+    onImageLoadErrorRef.current = onImageLoadError;
+  }, [onImageLoadError]);
+  React.useEffect(() => {
+    if (!imageSrc) {
+      setDisplayImageSrc("");
+      setImageLoaded(true);
+      return;
+    }
+    if (!displayImageSrcRef.current) {
+      setDisplayImageSrc(imageSrc);
+      setImageLoaded(false);
+      return;
+    }
+    if (imageSrc === displayImageSrcRef.current) return;
+
+    let cancelled = false;
+    const nextImage = new Image();
+    nextImage.onload = () => {
+      if (cancelled) return;
+      setDisplayImageSrc(imageSrc);
+      setImageLoaded(true);
+    };
+    nextImage.onerror = () => {
+      if (cancelled) return;
+      onImageLoadErrorRef.current();
+    };
+    nextImage.src = imageSrc;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSrc]);
   const showPanel = React.useCallback(() => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
     setOpen(true);
@@ -986,7 +1063,29 @@ function PolaroidCard({
           }}
           aria-label="拖拽移动图片，点击放大查看"
         >
-          <img className="block h-auto w-full rounded-[1px]" draggable={false} src={getCardImageSrc(card)} alt={card.title} onError={onImageLoadError} />
+          <span
+            className="relative block w-full overflow-hidden rounded-[1px] bg-zinc-100 dark:bg-zinc-200"
+            style={{ minHeight: imagePlaceholderHeight }}
+          >
+            {!imageLoaded && (
+              <span className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,rgba(244,244,245,.92),rgba(255,255,255,.98),rgba(244,244,245,.92))] dark:bg-[linear-gradient(110deg,rgba(228,228,231,.9),rgba(255,255,255,.98),rgba(228,228,231,.9))]" />
+            )}
+            {displayImageSrc ? (
+              <img
+                className={cn("block h-auto w-full rounded-[1px] transition-opacity duration-150", imageLoaded ? "opacity-100" : "opacity-0")}
+                draggable={false}
+                src={displayImageSrc}
+                alt={card.title}
+                loading="eager"
+                decoding="async"
+                onLoad={() => setImageLoaded(true)}
+                onError={() => {
+                  setImageLoaded(true);
+                  onImageLoadError();
+                }}
+              />
+            ) : null}
+          </span>
         </button>
         <button
           className="image-float-button absolute left-1/2 top-1/2 z-20 grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-zinc-700 opacity-0 transition group-hover:opacity-100 dark:text-zinc-100"
@@ -1452,6 +1551,10 @@ function readDeletedCards() {
   } catch {
     return new Set<string>();
   }
+}
+
+function currentDeletedCards(ref: React.MutableRefObject<Set<string>>) {
+  return new Set([...readDeletedCards(), ...ref.current]);
 }
 
 function rememberDeletedCard(id: string) {

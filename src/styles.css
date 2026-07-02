@@ -141,8 +141,65 @@ body {
   filter: none;
 }
 
+.hand-drawn-ui .search-back-button {
+  box-shadow: none;
+  filter: none;
+}
+
 .hand-drawn-ui .search-back-button svg {
   filter: none;
+}
+
+.hand-drawn-ui .search-result-card,
+.hand-drawn-ui .search-result-image-shell {
+  box-shadow: none;
+  filter: none;
+  rotate: 0deg;
+}
+
+.ui-style-archive .search-results-page {
+  background: rgba(250, 250, 244, 0.96);
+  color: #171717;
+}
+
+.ui-style-archive .search-results-header p,
+.ui-style-archive .search-results-header h2,
+.ui-style-archive .search-suggestions-label {
+  color: #171717;
+  opacity: 1;
+}
+
+.ui-style-archive .search-results-header p:first-of-type {
+  color: #44403a;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.ui-style-archive .search-results-header p:last-of-type {
+  color: #5f5b52;
+  font-weight: 700;
+}
+
+.ui-style-archive .search-suggestions-panel {
+  border-color: rgba(17, 17, 17, 0.14);
+  background: rgba(255, 255, 250, 0.72);
+}
+
+.ui-style-archive .search-suggestion-button {
+  border-color: rgba(17, 17, 17, 0.22);
+  background: rgba(255, 255, 250, 0.96);
+  color: #2b2b2b;
+  font-weight: 700;
+}
+
+.ui-style-archive .search-suggestion-button:hover {
+  border-color: rgba(17, 17, 17, 0.5);
+  background: #fff;
+  color: #111;
+}
+
+.ui-style-archive .search-suggestion-button span {
+  color: #6b665d;
 }
 
 .hand-drawn-ui :where(.analysis-panel, .analysis-panel *, .content-copy-button, .content-copy-button *, .toast-message, .toast-message *, .template-panel, .template-panel *) {
@@ -249,7 +306,7 @@ body {
   background-color: rgba(255, 255, 255, 0.46);
   background-image: none;
   will-change: left;
-  animation: gallery-scene-drift 18.2s ease-in-out infinite alternate;
+  animation: gallery-scene-drift 16.55s ease-in-out infinite alternate;
 }
 
 .ui-style-gallery .day-column,
@@ -291,7 +348,7 @@ body {
   transform-origin: 50% 36%;
   scale: var(--gallery-scale, 1);
   will-change: transform;
-  animation: gallery-float-medium 18s ease-in-out infinite alternate;
+  animation: gallery-float-medium 16.36s ease-in-out infinite alternate;
 }
 
 .ui-style-gallery .polaroid-card:hover {
@@ -393,7 +450,7 @@ body {
   margin-top: 34px;
   opacity: 0.74;
   animation-name: gallery-float-far;
-  animation-duration: 24s;
+  animation-duration: 21.82s;
   animation-delay: -9s;
   filter: saturate(0.88);
 }
@@ -403,7 +460,7 @@ body {
   margin-top: -22px;
   opacity: 0.92;
   animation-name: gallery-float-near;
-  animation-duration: 15s;
+  animation-duration: 13.64s;
   animation-delay: -4s;
 }
 
@@ -412,7 +469,7 @@ body {
   margin-top: 54px;
   opacity: 0.58;
   animation-name: gallery-float-far;
-  animation-duration: 28s;
+  animation-duration: 25.45s;
   animation-delay: -17s;
   filter: saturate(0.72);
 }
@@ -421,7 +478,7 @@ body {
   z-index: 18;
   opacity: 1;
   animation-name: gallery-float-near;
-  animation-duration: 13s;
+  animation-duration: 11.82s;
   animation-delay: -7s;
   filter: saturate(1.05);
 }

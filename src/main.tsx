@@ -82,6 +82,7 @@ const uiStyleStorageKey = "journal-ui-style";
 const columnWidth = 1200;
 const boardWidth = columnWidth * 7;
 const boardHeight = 3200;
+const defaultStyleScales: Record<UiStyle, number> = { journal: 0.5, gallery: 1, archive: 0.42 };
 const uiStyles: Array<{ id: UiStyle; label: string; description: string }> = [
   { id: "journal", label: "手帐", description: "纸张、胶带和轻微错落排版" },
   { id: "gallery", label: "漂浮", description: "无边界空间、分层漂浮卡片和纵深浏览" },
@@ -120,7 +121,7 @@ function JournalApp() {
   const [searchMode, setSearchMode] = React.useState(false);
   const [searchLoading, setSearchLoading] = React.useState(false);
   const [canvasScale, setCanvasScale] = React.useState(1);
-  const styleScaleRef = React.useRef<Record<UiStyle, number>>({ journal: 0.76, gallery: 1, archive: 0.42 });
+  const styleScaleRef = React.useRef<Record<UiStyle, number>>({ ...defaultStyleScales });
   const [galleryDepth, setGalleryDepth] = React.useState(0);
   const [cardPositions, setCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions());
   const [galleryCardPositions, setGalleryCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions(galleryPositionStorageKey));
@@ -152,12 +153,13 @@ function JournalApp() {
     styleScaleRef.current[uiStyle] = canvasScale;
     const index = uiStyles.findIndex((style) => style.id === uiStyle);
     const nextStyle = uiStyles[(index + 1) % uiStyles.length].id;
-    setCanvasScale(styleScaleRef.current[nextStyle]);
+    if (nextStyle === "journal") centeredWeekRef.current = null;
+    setCanvasScale(nextStyle === "journal" ? defaultStyleScales.journal : styleScaleRef.current[nextStyle]);
     setUiStyle(nextStyle);
   }, [canvasScale, uiStyle]);
 
   React.useEffect(() => {
-    styleScaleRef.current = { journal: 0.76, gallery: 1, archive: 0.42 };
+    styleScaleRef.current = { ...defaultStyleScales };
     setCanvasScale(styleScaleRef.current[uiStyle]);
   }, []);
 
@@ -716,6 +718,35 @@ function JournalApp() {
     }).catch(() => undefined);
   }
 
+  function centerTodayContent() {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    if (uiStyle === "gallery") {
+      viewport.scrollLeft = Math.max(0, (boardWidth * canvasScale - viewport.clientWidth) / 2);
+      viewport.scrollTop = Math.max(0, (boardHeight * canvasScale - viewport.clientHeight) / 2);
+      return;
+    }
+
+    const todayIndex = findTodayIndex(days.map((_, index) => addDays(startOfWeek(new Date()), index)));
+    if (todayIndex < 0) return;
+    const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
+    viewport.scrollLeft = Math.max(0, targetLeft);
+    viewport.scrollTop = 0;
+  }
+
+  function goToToday() {
+    centeredWeekRef.current = null;
+    setSearchMode(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchSuggestions([]);
+    setSearchLoading(false);
+    setWeekOffset(0);
+    if (uiStyle === "gallery") setGalleryDepth(0);
+    window.setTimeout(centerTodayContent, 80);
+  }
+
   function jumpToSearchResult(card: InspirationImage) {
     const targetWeekStart = parseDateKey(card.weekStart);
     const nextOffset = Math.round((targetWeekStart.getTime() - startOfWeek(new Date()).getTime()) / (7 * 24 * 60 * 60 * 1000));
@@ -776,7 +807,7 @@ function JournalApp() {
             <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="上一周">
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Button variant="outline" className="top-nav-button h-9 rounded-md bg-white/90 px-4 text-xs dark:bg-zinc-900/80" onClick={() => setWeekOffset(0)}>
+            <Button variant="outline" className="top-nav-button h-9 rounded-md bg-white/90 px-4 text-xs dark:bg-zinc-900/80" onClick={goToToday}>
               Today
             </Button>
             <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="下一周">
@@ -1098,9 +1129,9 @@ function SearchResultsPage({
   onClose: () => void;
 }) {
   return (
-    <section className="h-screen overflow-auto bg-white px-5 pb-16 pt-[96px] font-sans dark:bg-zinc-950">
+    <section className="search-results-page relative z-10 h-screen overflow-auto bg-white px-5 pb-16 pt-[96px] font-sans dark:bg-zinc-950">
       <div className="mx-auto max-w-[1680px]">
-        <div className="mb-5">
+        <div className="search-results-header mb-5">
           <button
             className="search-back-button mb-5 grid h-9 w-9 place-items-center rounded-full border border-zinc-200 bg-white text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
             onClick={onClose}
@@ -1117,13 +1148,13 @@ function SearchResultsPage({
         </div>
 
       {suggestions.length > 0 && (
-        <div className="mb-5 rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/45">
-          <div className="mb-3 text-xs text-zinc-400">关键词联想</div>
+        <div className="search-suggestions-panel mb-5 rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/45">
+          <div className="search-suggestions-label mb-3 text-xs text-zinc-400">关键词联想</div>
           <div className="flex flex-wrap gap-2">
             {suggestions.map((suggestion) => (
               <button
                 key={suggestion.keyword}
-                className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                className="search-suggestion-button rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
                 onClick={() => onSuggestion(suggestion.keyword)}
               >
                 {suggestion.keyword}
@@ -1143,10 +1174,10 @@ function SearchResultsPage({
               {results.map((card) => (
             <button
               key={card.id}
-              className="group overflow-hidden rounded-xl border border-zinc-200 bg-white text-left transition hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+              className="search-result-card group overflow-hidden rounded-xl border border-zinc-200 bg-white text-left transition hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
               onClick={() => onSelect(card)}
             >
-              <div className="aspect-[4/5] overflow-hidden bg-zinc-100 dark:bg-zinc-800">
+              <div className="search-result-image-shell aspect-[4/5] overflow-hidden bg-zinc-100 dark:bg-zinc-800">
                 {getCardImageSrc(card) ? <img className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" src={getCardImageSrc(card)} alt={card.title} loading="lazy" /> : null}
               </div>
               <div className="p-3">
@@ -1220,10 +1251,11 @@ function PolaroidCard({
   const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
   const gallerySpacing = 240;
-  const galleryPhase = (depthIndex + 1) * gallerySpacing - galleryDepth;
+  const galleryRank = galleryDepthRank(depthIndex, totalCards);
+  const galleryPhase = (galleryRank + 1) * gallerySpacing - galleryDepth;
   const galleryNearness = Math.exp(-Math.max(0, galleryPhase) / 840);
   const galleryScale = (0.38 + galleryNearness * 1.78) * 1.2;
-  const galleryFinalLayer = depthIndex >= Math.max(0, totalCards - 6);
+  const galleryFinalLayer = galleryRank >= Math.max(0, totalCards - 6);
   const galleryOpacity = galleryPhase < 0
     ? clamp(1 + galleryPhase / 180, 0, 1)
     : galleryFinalLayer
@@ -1681,6 +1713,24 @@ function cardLayout(index: number, uiStyle: UiStyle = "journal") {
     { width: 132 }
   ];
   return layouts[index % layouts.length];
+}
+
+function galleryDepthRank(index: number, total: number) {
+  if (total <= 1) return index;
+  const preferredSteps = [7, 11, 5, 13, total - 1];
+  const step = preferredSteps.find((value) => value > 0 && greatestCommonDivisor(value, total) === 1) || 1;
+  return (index * step) % total;
+}
+
+function greatestCommonDivisor(a: number, b: number) {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  return x || 1;
 }
 
 function clamp(value: number, min: number, max: number) {

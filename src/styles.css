@@ -306,7 +306,7 @@ body {
   background-color: rgba(255, 255, 255, 0.46);
   background-image: none;
   will-change: left;
-  animation: gallery-scene-drift 16.55s ease-in-out infinite alternate;
+  animation: gallery-scene-drift 15.76s ease-in-out infinite alternate;
 }
 
 .ui-style-gallery .day-column,
@@ -348,7 +348,7 @@ body {
   transform-origin: 50% 36%;
   scale: var(--gallery-scale, 1);
   will-change: transform;
-  animation: gallery-float-medium 16.36s ease-in-out infinite alternate;
+  animation: gallery-float-medium 15.58s ease-in-out infinite alternate;
 }
 
 .ui-style-gallery .polaroid-card:hover {
@@ -450,7 +450,7 @@ body {
   margin-top: 34px;
   opacity: 0.74;
   animation-name: gallery-float-far;
-  animation-duration: 21.82s;
+  animation-duration: 20.78s;
   animation-delay: -9s;
   filter: saturate(0.88);
 }
@@ -460,7 +460,7 @@ body {
   margin-top: -22px;
   opacity: 0.92;
   animation-name: gallery-float-near;
-  animation-duration: 13.64s;
+  animation-duration: 12.99s;
   animation-delay: -4s;
 }
 
@@ -469,7 +469,7 @@ body {
   margin-top: 54px;
   opacity: 0.58;
   animation-name: gallery-float-far;
-  animation-duration: 25.45s;
+  animation-duration: 24.24s;
   animation-delay: -17s;
   filter: saturate(0.72);
 }
@@ -478,7 +478,7 @@ body {
   z-index: 18;
   opacity: 1;
   animation-name: gallery-float-near;
-  animation-duration: 11.82s;
+  animation-duration: 11.26s;
   animation-delay: -7s;
   filter: saturate(1.05);
 }

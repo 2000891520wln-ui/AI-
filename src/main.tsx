@@ -41,6 +41,7 @@ type InspirationImage = {
   imageUrl?: string | null;
   storagePath?: string | null;
   sourceFingerprint?: string;
+  imageAspectRatio?: number;
   keywords: string[];
   reversePrompt: string;
   decoration: Decoration;
@@ -115,6 +116,8 @@ function JournalApp() {
   const toastTimerRef = React.useRef<number | null>(null);
   const [promptTemplate, setPromptTemplate] = React.useState(() => localStorage.getItem("journal-prompt-template") || defaultTemplate);
   const viewportRef = React.useRef<HTMLElement>(null);
+  const searchBoxRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
   const pinchDistanceRef = React.useRef<number | null>(null);
   const canvasPanRef = React.useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const centeredWeekRef = React.useRef<string | null>(null);
@@ -183,6 +186,16 @@ function JournalApp() {
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
   }, [promptTemplate]);
+
+  React.useEffect(() => {
+    const blurSearchOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && searchBoxRef.current?.contains(target)) return;
+      searchInputRef.current?.blur();
+    };
+    document.addEventListener("pointerdown", blurSearchOnOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", blurSearchOnOutsidePointerDown, true);
+  }, []);
 
   React.useEffect(() => {
     const query = searchQuery.trim();
@@ -408,6 +421,7 @@ function JournalApp() {
     const batchFingerprints = new Set<string>();
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
+      const imageAspectRatio = await imageAspectRatioFromFile(file);
       const imageDataUrl = await fileToDataUrl(file);
       const sourceFingerprint = await fingerprintDataUrl(imageDataUrl);
       if (batchFingerprints.has(sourceFingerprint)) continue;
@@ -441,6 +455,7 @@ function JournalApp() {
         title: file.name || "pasted screenshot",
         imageDataUrl,
         sourceFingerprint,
+        imageAspectRatio,
         decoration,
         keywords: ["分析中"],
         reversePrompt: "AI 正在分析视觉风格并生成反推 prompt...",
@@ -478,7 +493,9 @@ function JournalApp() {
           persistLocal(
             targetWeekKey,
             current.map((item) =>
-              item.id === tempId ? { ...resolved, clientId: tempId, sourceFingerprint, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" } : item
+              item.id === tempId
+                ? { ...resolved, clientId: tempId, sourceFingerprint, imageAspectRatio, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" }
+                : item
             )
           )
         );
@@ -499,6 +516,7 @@ function JournalApp() {
           id: crypto.randomUUID(),
           clientId: tempId,
           sourceFingerprint,
+          imageAspectRatio,
           keywords: ["AI 未连接"],
           reversePrompt: "没有配置可用的 GPT/Gemini API Key，应用无法根据图片生成真实关键词和 prompt。",
           analysisNote: `AI 接口未完成：${message}`
@@ -599,9 +617,10 @@ function JournalApp() {
             <span className="h-7 w-px bg-zinc-300 dark:bg-zinc-700" />
             <p className="text-sm text-zinc-500 dark:text-zinc-400">{formatRange(weekStart, addDays(weekStart, 6))}</p>
           </div>
-          <div className="relative min-w-[280px] flex-1 max-w-[560px]">
+          <div ref={searchBoxRef} className="relative min-w-[280px] flex-1 max-w-[560px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input
+              ref={searchInputRef}
               className="h-10 w-full rounded-lg border border-zinc-200/80 bg-white/90 px-9 pr-20 text-sm font-sans text-zinc-800 outline-none backdrop-blur-xl transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-100"
               value={searchQuery}
               onChange={(event) => {
@@ -842,24 +861,22 @@ function DayColumn({
       />
 
       <div className="grid grid-cols-[repeat(auto-fill,180px)] content-start items-start gap-x-9 gap-y-12">
-        <AnimatePresence>
-          {images.map((image, index) => (
-            <PolaroidCard
-              key={image.clientId || image.id}
-              card={image}
-              index={index}
-              loading={Boolean(pending[image.id])}
-              onDeleteCard={onDeleteCard}
-              onDeleteKeyword={onDeleteKeyword}
-              onOpenPreview={onOpenPreview}
-              onMoveCard={onMoveCard}
-              onCopy={onCopy}
-              onImageLoadError={onImageLoadError}
-              position={cardPositions[image.id]}
-              canvasScale={canvasScale}
-            />
-          ))}
-        </AnimatePresence>
+        {images.map((image, index) => (
+          <PolaroidCard
+            key={image.clientId || image.id}
+            card={image}
+            index={index}
+            loading={Boolean(pending[image.id])}
+            onDeleteCard={onDeleteCard}
+            onDeleteKeyword={onDeleteKeyword}
+            onOpenPreview={onOpenPreview}
+            onMoveCard={onMoveCard}
+            onCopy={onCopy}
+            onImageLoadError={onImageLoadError}
+            position={cardPositions[image.id]}
+            canvasScale={canvasScale}
+          />
+        ))}
         {!images.length && (
           <div className="mt-12 w-full rounded-sm border border-dashed border-zinc-200/70 bg-white/24 px-3 py-5 text-center text-[11px] leading-5 text-zinc-400 opacity-0 transition group-hover/day:opacity-100 dark:border-zinc-800 dark:bg-zinc-900/10 dark:text-zinc-600">
             <Wand2 className="mx-auto mb-2 h-3.5 w-3.5" />
@@ -1000,7 +1017,7 @@ function PolaroidCard({
   const extra = Math.max(0, card.keywords.length - 1);
   const layout = cardLayout(index);
   const imageSrc = getCardImageSrc(card);
-  const imagePlaceholderHeight = Math.round(layout.width * 1.28);
+  const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
@@ -1102,15 +1119,13 @@ function PolaroidCard({
   };
 
   return (
-    <motion.article
+    <article
       ref={cardRef}
       data-canvas-pan-ignore="true"
-      initial={{ opacity: 0, y: 18, rotate: card.decoration.rotate }}
-      animate={{ opacity: 1, y: 0, rotate: card.decoration.rotate }}
-      exit={{ opacity: 0, y: -12 }}
       className="group relative z-10 shrink-0 touch-pan-x touch-pan-y select-none rounded-[2px] bg-white p-[8px] pb-4 text-zinc-950 shadow-polaroid ring-1 ring-black/[0.03] transition hover:z-30 dark:bg-zinc-100"
       style={{
         width: layout.width,
+        rotate: `${card.decoration.rotate}deg`,
         translate: `${activePosition.x}px ${activePosition.y}px`
       }}
       onPointerDown={handlePointerDown}
@@ -1139,7 +1154,7 @@ function PolaroidCard({
         >
           <span
             className="relative block w-full overflow-hidden rounded-[1px] bg-zinc-100 dark:bg-zinc-200"
-            style={{ minHeight: imagePlaceholderHeight }}
+            style={{ aspectRatio: imageAspectRatio }}
           >
             {!imageLoaded && (
               <span className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,rgba(244,244,245,.92),rgba(255,255,255,.98),rgba(244,244,245,.92))] dark:bg-[linear-gradient(110deg,rgba(228,228,231,.9),rgba(255,255,255,.98),rgba(228,228,231,.9))]" />
@@ -1147,6 +1162,7 @@ function PolaroidCard({
             {displayImageSrc ? (
               <img
                 className={cn("block h-auto w-full rounded-[1px] transition-opacity duration-150", imageLoaded ? "opacity-100" : "opacity-0")}
+                style={{ height: "100%", objectFit: "contain" }}
                 draggable={false}
                 src={displayImageSrc}
                 alt={card.title}
@@ -1187,7 +1203,7 @@ function PolaroidCard({
           )}
         </div>
       </div>
-    </motion.article>
+    </article>
   );
 }
 
@@ -1445,6 +1461,28 @@ function fileToDataUrl(file: File) {
   });
 }
 
+async function imageAspectRatioFromFile(file: File) {
+  try {
+    if ("createImageBitmap" in window) {
+      const bitmap = await createImageBitmap(file);
+      const ratio = bitmap.width / bitmap.height;
+      bitmap.close();
+      if (Number.isFinite(ratio) && ratio > 0) return ratio;
+    }
+  } catch {
+    // Fall through to FileReader-based detection.
+  }
+
+  try {
+    const dataUrl = await fileToDataUrl(file);
+    const image = await loadImageElement(dataUrl);
+    const ratio = image.naturalWidth / image.naturalHeight;
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fingerprintDataUrl(dataUrl: string) {
   try {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(dataUrl));
@@ -1666,20 +1704,21 @@ function readDefaultPromptTemplate() {
 
 function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[]) {
   const rows = new Map<string, InspirationImage>();
+  const order: string[] = [];
   for (const row of localRows) rows.set(row.id, row);
+  for (const row of localRows) order.push(row.id);
   for (const row of serverRows) {
     const local = rows.get(row.id);
+    if (!local) order.push(row.id);
     rows.set(row.id, {
       ...local,
       ...row,
       clientId: local?.clientId,
-      sourceFingerprint: local?.sourceFingerprint
+      sourceFingerprint: local?.sourceFingerprint,
+      imageAspectRatio: local?.imageAspectRatio
     });
   }
-  return [...rows.values()].sort((left, right) => {
-    if (left.dayIndex !== right.dayIndex) return left.dayIndex - right.dayIndex;
-    return timestampOf(left.createdAt) - timestampOf(right.createdAt);
-  });
+  return order.map((id) => rows.get(id)).filter(Boolean) as InspirationImage[];
 }
 
 function timestampOf(value?: string) {

@@ -8,7 +8,6 @@ import {
   Copy,
   Download,
   Maximize2,
-  Moon,
   Paperclip,
   Pin,
   Search,
@@ -16,6 +15,7 @@ import {
   Sun,
   Trash2,
   Wand2,
+  Archive,
   X
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
@@ -60,6 +60,8 @@ type SearchSuggestion = {
   count: number;
 };
 
+type UiStyle = "journal" | "gallery" | "archive";
+
 type AuthConfig = {
   enabled?: boolean;
   supabaseUrl?: string;
@@ -75,9 +77,15 @@ const localStorageKey = "design-terminology-journal";
 const deletedCardsStorageKey = "design-terminology-deleted-cards";
 const positionStorageKey = "design-terminology-card-positions";
 const authTokenStorageKey = "journal-auth-token";
+const uiStyleStorageKey = "journal-ui-style";
 const columnWidth = 1200;
 const boardWidth = columnWidth * 7;
 const boardHeight = 3200;
+const uiStyles: Array<{ id: UiStyle; label: string; description: string }> = [
+  { id: "journal", label: "手帐", description: "纸张、胶带和轻微错落排版" },
+  { id: "gallery", label: "画廊", description: "博物馆挂画、木质画框和作品铭牌" },
+  { id: "archive", label: "档案", description: "馆藏目录、黑框图片和索引信息" }
+];
 const defaultPromptTemplate = `请你作为一名资深视觉设计师和 AI 视觉风格分析师，基于用户上传的参考图反推出一段可复用的 AI 生图 prompt。
 
 请重点分析：
@@ -103,7 +111,7 @@ function JournalApp() {
   const [images, setImages] = React.useState<InspirationImage[]>([]);
   const [activeCard, setActiveCard] = React.useState<InspirationImage | null>(null);
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
-  const [dark, setDark] = React.useState(() => localStorage.getItem("journal-theme") === "dark");
+  const [uiStyle, setUiStyle] = React.useState<UiStyle>(() => readUiStyle());
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [searchResults, setSearchResults] = React.useState<InspirationImage[]>([]);
@@ -133,10 +141,20 @@ function JournalApp() {
   const weekDates = React.useMemo(() => days.map((_, index) => addDays(weekStart, index)), [weekStart]);
   const todayWeekKey = React.useMemo(() => formatKey(startOfWeek(new Date())), []);
 
+  const activeUiStyle = React.useMemo(() => uiStyles.find((style) => style.id === uiStyle) || uiStyles[0], [uiStyle]);
+  const nextUiStyle = React.useCallback(() => {
+    setUiStyle((current) => {
+      const index = uiStyles.findIndex((style) => style.id === current);
+      return uiStyles[(index + 1) % uiStyles.length].id;
+    });
+  }, []);
+
   React.useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("journal-theme", dark ? "dark" : "light");
-  }, [dark]);
+    document.documentElement.classList.toggle("dark", false);
+    document.documentElement.dataset.uiStyle = uiStyle;
+    localStorage.setItem(uiStyleStorageKey, uiStyle);
+    localStorage.setItem("journal-theme", "light");
+  }, [uiStyle]);
 
   React.useEffect(() => {
     imagesRef.current = images;
@@ -606,7 +624,7 @@ function JournalApp() {
   }
 
   return (
-    <main className="hand-drawn-ui min-h-screen overflow-hidden bg-background text-foreground">
+    <main className={cn("hand-drawn-ui min-h-screen overflow-hidden bg-background text-foreground", `ui-style-${uiStyle}`)}>
       <div className="journal-grain" />
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/70 bg-background/92 px-4 py-3 backdrop-blur-xl dark:border-zinc-800/70">
         <div className="mx-auto flex max-w-[1880px] items-center justify-between gap-4">
@@ -661,8 +679,17 @@ function JournalApp() {
         >
           <Wand2 className="h-4 w-4" />
         </button>
-        <button className="grid h-11 w-11 place-items-center border-b" onClick={() => setDark((value) => !value)} aria-label="深色模式">
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        <button
+          className="style-switch-button grid h-11 w-11 place-items-center border-b"
+          onClick={nextUiStyle}
+          aria-label={`切换界面风格，当前为${activeUiStyle.label}`}
+          title={`当前风格：${activeUiStyle.label}。点击切换下一种风格`}
+        >
+          <span className="relative grid h-5 w-5 place-items-center">
+            {uiStyle === "journal" && <Sparkles className="h-4 w-4" />}
+            {uiStyle === "gallery" && <Sun className="h-4 w-4" />}
+            {uiStyle === "archive" && <Archive className="h-4 w-4" />}
+          </span>
         </button>
         <button className="grid h-11 w-11 place-items-center border-b" aria-label="导出">
           <Download className="h-4 w-4" />
@@ -762,12 +789,13 @@ function JournalApp() {
                   cardPositions={cardPositions}
                   canvasScale={canvasScale}
                   pending={pending}
+                  uiStyle={uiStyle}
                 />
               ))}
             </div>
           </div>
           <div className="pointer-events-none fixed bottom-5 left-5 z-40 rounded-md border border-zinc-200/80 bg-white/88 px-3 py-2 text-[11px] font-medium text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-400">
-            {Math.round(canvasScale * 100)}%
+            {activeUiStyle.label} · {Math.round(canvasScale * 100)}%
           </div>
         </section>
       <AnimatePresence>
@@ -806,7 +834,8 @@ function DayColumn({
   onImageLoadError,
   cardPositions,
   canvasScale,
-  pending
+  pending,
+  uiStyle
 }: {
   date: Date;
   dayIndex: number;
@@ -821,13 +850,14 @@ function DayColumn({
   cardPositions: Record<string, CardPosition>;
   canvasScale: number;
   pending: Record<string, boolean>;
+  uiStyle: UiStyle;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = React.useState(false);
 
   return (
     <article
-      className={cn("group/day relative px-7 pb-10 pt-10", dragging && "bg-amber-50/20 dark:bg-amber-300/5")}
+      className={cn("group/day day-column relative px-7 pb-10 pt-10", dragging && "bg-amber-50/20 dark:bg-amber-300/5")}
       style={{ minHeight: `${boardHeight}px` }}
       onDoubleClick={(event) => {
         if ((event.target as HTMLElement).closest("[data-canvas-pan-ignore='true'], button, input, textarea, select, a")) return;
@@ -845,7 +875,7 @@ function DayColumn({
         onFiles([...event.dataTransfer.files], dayIndex);
       }}
     >
-      <div className="mb-8 text-center">
+      <div className="day-heading mb-8 text-center">
         <div className="font-journal text-[31px] leading-none text-zinc-700 dark:text-amber-50">{date.getDate()}</div>
         <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.13em] text-zinc-500 dark:text-zinc-500">{dayShort[dayIndex]}</div>
         <div className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-600">{days[dayIndex]}</div>
@@ -860,7 +890,14 @@ function DayColumn({
         onChange={(event) => onFiles([...(event.target.files || [])], dayIndex)}
       />
 
-      <div className="grid grid-cols-[repeat(auto-fill,180px)] content-start items-start gap-x-9 gap-y-12">
+      <div
+        className={cn(
+          "day-card-grid grid content-start items-start",
+          uiStyle === "journal" && "grid-cols-[repeat(auto-fill,180px)] gap-x-9 gap-y-12",
+          uiStyle === "gallery" && "grid-cols-[repeat(auto-fill,230px)] gap-x-7 gap-y-8",
+          uiStyle === "archive" && "grid-cols-[repeat(auto-fill,210px)] gap-x-8 gap-y-12"
+        )}
+      >
         {images.map((image, index) => (
           <PolaroidCard
             key={image.clientId || image.id}
@@ -875,6 +912,7 @@ function DayColumn({
             onImageLoadError={onImageLoadError}
             position={cardPositions[image.id]}
             canvasScale={canvasScale}
+            uiStyle={uiStyle}
           />
         ))}
         {!images.length && (
@@ -988,7 +1026,8 @@ function PolaroidCard({
   onCopy,
   onImageLoadError,
   position,
-  canvasScale
+  canvasScale,
+  uiStyle
 }: {
   card: InspirationImage;
   index: number;
@@ -1001,6 +1040,7 @@ function PolaroidCard({
   onImageLoadError: () => void;
   position?: CardPosition;
   canvasScale: number;
+  uiStyle: UiStyle;
 }) {
   const [open, setOpen] = React.useState(false);
   const [imageLoaded, setImageLoaded] = React.useState(false);
@@ -1015,7 +1055,7 @@ function PolaroidCard({
   const [draftPosition, setDraftPosition] = React.useState<CardPosition | null>(null);
   const first = card.keywords[0] || "未命名术语";
   const extra = Math.max(0, card.keywords.length - 1);
-  const layout = cardLayout(index);
+  const layout = cardLayout(index, uiStyle);
   const imageSrc = getCardImageSrc(card);
   const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
@@ -1122,10 +1162,15 @@ function PolaroidCard({
     <article
       ref={cardRef}
       data-canvas-pan-ignore="true"
-      className="group relative z-10 shrink-0 touch-pan-x touch-pan-y select-none rounded-[2px] bg-white p-[8px] pb-4 text-zinc-950 shadow-polaroid ring-1 ring-black/[0.03] transition hover:z-30 dark:bg-zinc-100"
+      className={cn(
+        "polaroid-card group relative z-10 shrink-0 touch-pan-x touch-pan-y select-none bg-white text-zinc-950 shadow-polaroid ring-1 ring-black/[0.03] transition hover:z-30 dark:bg-zinc-100",
+        uiStyle === "journal" && "rounded-[2px] p-[8px] pb-4",
+        uiStyle === "gallery" && "rounded-lg p-2.5 pb-3",
+        uiStyle === "archive" && "rounded-none p-0"
+      )}
       style={{
         width: layout.width,
-        rotate: `${card.decoration.rotate}deg`,
+        rotate: `${uiStyle === "gallery" ? card.decoration.rotate * 0.18 : uiStyle === "archive" ? 0 : card.decoration.rotate}deg`,
         translate: `${activePosition.x}px ${activePosition.y}px`
       }}
       onPointerDown={handlePointerDown}
@@ -1133,7 +1178,13 @@ function PolaroidCard({
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      <DecorationIcon decoration={card.decoration} />
+      {uiStyle === "gallery" && (
+        <div className="gallery-work-title" aria-hidden="true">
+          <span>{first}</span>
+          <small>Ver. {new Date(card.createdAt || card.updatedAt || Date.now()).getFullYear()}</small>
+        </div>
+      )}
+      {uiStyle !== "gallery" && uiStyle !== "archive" && <DecorationIcon decoration={card.decoration} />}
       <button
         className="image-float-button absolute -right-3 -top-3 z-20 grid h-8 w-8 place-items-center rounded-full text-zinc-700 opacity-0 transition group-hover:opacity-100 dark:text-zinc-100"
         data-drag-ignore="true"
@@ -1142,7 +1193,7 @@ function PolaroidCard({
       >
         <Trash2 className="h-4 w-4" />
       </button>
-      <div className="relative">
+      <div className="artwork-frame relative">
         <button
           className="block w-full cursor-grab active:cursor-grabbing"
           draggable={false}
@@ -1154,7 +1205,7 @@ function PolaroidCard({
         >
           <span
             className="relative block w-full overflow-hidden rounded-[1px] bg-zinc-100 dark:bg-zinc-200"
-            style={{ aspectRatio: imageAspectRatio }}
+            style={{ aspectRatio: uiStyle === "archive" ? "4 / 5" : imageAspectRatio }}
           >
             {!imageLoaded && (
               <span className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,rgba(244,244,245,.92),rgba(255,255,255,.98),rgba(244,244,245,.92))] dark:bg-[linear-gradient(110deg,rgba(228,228,231,.9),rgba(255,255,255,.98),rgba(228,228,231,.9))]" />
@@ -1162,7 +1213,7 @@ function PolaroidCard({
             {displayImageSrc ? (
               <img
                 className={cn("block h-auto w-full rounded-[1px] transition-opacity duration-150", imageLoaded ? "opacity-100" : "opacity-0")}
-                style={{ height: "100%", objectFit: "contain" }}
+                style={{ height: "100%", objectFit: uiStyle === "archive" ? "cover" : "contain" }}
                 draggable={false}
                 src={displayImageSrc}
                 alt={card.title}
@@ -1188,21 +1239,47 @@ function PolaroidCard({
         </button>
       </div>
       <div className="relative mt-2">
-        <div className="relative flex items-start gap-2" onMouseEnter={showPanel} onMouseLeave={scheduleClosePanel}>
-          <button
-            className="content-copy-button inline-flex max-w-full items-center gap-1 rounded-md border border-zinc-200/80 bg-white/94 px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-[0_8px_18px_rgba(0,0,0,.13)] backdrop-blur transition hover:-translate-y-0.5 dark:border-zinc-700 dark:bg-zinc-950/90 dark:text-zinc-100"
-            data-drag-ignore="true"
-            onClick={() => copyText(card.keywords.join(", "), onCopy, "关键词已复制")}
-          >
-            <Copy className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{extra ? `${first} +${extra}` : first}</span>
-          </button>
+        <div className={cn("relative flex items-start gap-2", uiStyle === "archive" && "block")} onMouseEnter={showPanel} onMouseLeave={scheduleClosePanel}>
+          {uiStyle === "archive" ? (
+            <button
+              className="archive-card-details block w-full text-left"
+              data-drag-ignore="true"
+              onClick={() => copyText(card.keywords.join(", "), onCopy, "关键词已复制")}
+              title="复制关键词"
+            >
+              <small>Collection owner: AI Journal</small>
+              <strong>{first}</strong>
+              <span>{card.keywords.slice(1, 3).join(" / ") || "Unclassified visual material"}</span>
+              <em>{archiveYearRange(card)}</em>
+            </button>
+          ) : (
+            <button
+              className="content-copy-button inline-flex max-w-full items-center gap-1 rounded-md border border-zinc-200/80 bg-white/94 px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-[0_8px_18px_rgba(0,0,0,.13)] backdrop-blur transition hover:-translate-y-0.5 dark:border-zinc-700 dark:bg-zinc-950/90 dark:text-zinc-100"
+              data-drag-ignore="true"
+              onClick={() => copyText(card.keywords.join(", "), onCopy, "关键词已复制")}
+            >
+              <Copy className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{extra ? `${first} +${extra}` : first}</span>
+            </button>
+          )}
           {loading && <Sparkles className="h-4 w-4 animate-pulse text-amber-600" />}
           {open && (
-            <AnalysisPanel card={card} onDeleteKeyword={onDeleteKeyword} onCopy={onCopy} className="absolute left-0 top-10 z-40 max-h-[520px] w-[min(420px,calc(100vw-48px))]" compact />
+            <AnalysisPanel
+              card={card}
+              onDeleteKeyword={onDeleteKeyword}
+              onCopy={onCopy}
+              className={cn("absolute left-0 z-40 max-h-[520px] w-[min(420px,calc(100vw-48px))]", uiStyle === "archive" ? "top-[calc(100%+10px)]" : "top-10")}
+              compact
+            />
           )}
         </div>
       </div>
+      {uiStyle === "gallery" && (
+        <div className="gallery-work-meta" aria-hidden="true">
+          <span>Unique work</span>
+          <small>{card.keywords.slice(1, 3).join(" / ") || "Visual reference archive"}</small>
+        </div>
+      )}
     </article>
   );
 }
@@ -1395,7 +1472,31 @@ function randomDecoration(): Decoration {
   };
 }
 
-function cardLayout(index: number) {
+function cardLayout(index: number, uiStyle: UiStyle = "journal") {
+  if (uiStyle === "gallery") {
+    const layouts = [
+      { width: 210 },
+      { width: 224 },
+      { width: 216 },
+      { width: 232 },
+      { width: 208 },
+      { width: 226 }
+    ];
+    return layouts[index % layouts.length];
+  }
+
+  if (uiStyle === "archive") {
+    const layouts = [
+      { width: 178 },
+      { width: 192 },
+      { width: 184 },
+      { width: 204 },
+      { width: 176 },
+      { width: 196 }
+    ];
+    return layouts[index % layouts.length];
+  }
+
   const layouts = [
     { width: 124 },
     { width: 148 },
@@ -1739,6 +1840,19 @@ function sameCards(left: InspirationImage[], right: InspirationImage[]) {
   });
 }
 
+function readUiStyle(): UiStyle {
+  const stored = localStorage.getItem(uiStyleStorageKey);
+  if (stored === "journal" || stored === "gallery" || stored === "archive") return stored;
+  if (stored === "darkroom" || localStorage.getItem("journal-theme") === "dark") return "archive";
+  return "journal";
+}
+
+function archiveYearRange(card: InspirationImage) {
+  const timestamp = timestampOf(card.createdAt || card.updatedAt);
+  const year = Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).getFullYear() : new Date().getFullYear();
+  return `${year}-${String(year + 1).slice(2)}`;
+}
+
 function MigrationExport() {
   const [status, setStatus] = React.useState("");
   const payload = React.useMemo(
@@ -1746,6 +1860,7 @@ function MigrationExport() {
       JSON.stringify({
         [localStorageKey]: localStorage.getItem(localStorageKey),
         [positionStorageKey]: localStorage.getItem(positionStorageKey),
+        [uiStyleStorageKey]: localStorage.getItem(uiStyleStorageKey),
         "journal-theme": localStorage.getItem("journal-theme"),
         "journal-prompt-template": localStorage.getItem("journal-prompt-template")
       }),
@@ -1786,11 +1901,13 @@ function tryImportMigrationData(text: string, notify: (message: string) => void)
 
     const journal = value[localStorageKey];
     const positions = value[positionStorageKey];
+    const uiStyle = value[uiStyleStorageKey];
     const theme = value["journal-theme"];
     const template = value["journal-prompt-template"];
 
     if (typeof journal === "string") localStorage.setItem(localStorageKey, journal);
     if (typeof positions === "string") localStorage.setItem(positionStorageKey, positions);
+    if (typeof uiStyle === "string") localStorage.setItem(uiStyleStorageKey, uiStyle);
     if (typeof theme === "string") localStorage.setItem("journal-theme", theme);
     if (typeof template === "string") localStorage.setItem("journal-prompt-template", template);
 

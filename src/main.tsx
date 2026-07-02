@@ -11,6 +11,7 @@ import {
   Moon,
   Paperclip,
   Pin,
+  Search,
   Sparkles,
   Sun,
   Trash2,
@@ -49,6 +50,11 @@ type InspirationImage = {
 type CardPosition = {
   x: number;
   y: number;
+};
+
+type SearchSuggestion = {
+  keyword: string;
+  count: number;
 };
 
 type AuthConfig = {
@@ -96,6 +102,11 @@ function JournalApp() {
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
   const [dark, setDark] = React.useState(() => localStorage.getItem("journal-theme") === "dark");
   const [templateOpen, setTemplateOpen] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [searchResults, setSearchResults] = React.useState<InspirationImage[]>([]);
+  const [searchSuggestions, setSearchSuggestions] = React.useState<SearchSuggestion[]>([]);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const [searchLoading, setSearchLoading] = React.useState(false);
   const [canvasScale, setCanvasScale] = React.useState(1);
   const [cardPositions, setCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions());
   const [toast, setToast] = React.useState<string | null>(null);
@@ -164,6 +175,47 @@ function JournalApp() {
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
   }, [promptTemplate]);
+
+  React.useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      setSearchSuggestions([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const [response, suggestionsResponse] = await Promise.all([
+          fetch(`/api/search?q=${encodeURIComponent(query)}`, { headers }),
+          fetch(`/api/search/suggestions?q=${encodeURIComponent(query)}`, { headers })
+        ]);
+        if (!response.ok) throw new Error("search unavailable");
+        const rows = ((await response.json()) as InspirationImage[]).map(resolveLegacyCard);
+        const suggestions = suggestionsResponse.ok ? ((await suggestionsResponse.json()) as SearchSuggestion[]) : [];
+        if (!cancelled) {
+          setSearchResults(rows);
+          setSearchSuggestions(suggestions);
+        }
+      } catch {
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchSuggestions([]);
+        }
+      } finally {
+        if (!cancelled) setSearchLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
 
   React.useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -428,6 +480,21 @@ function JournalApp() {
     }).catch(() => undefined);
   }
 
+  function jumpToSearchResult(card: InspirationImage) {
+    const targetWeekStart = parseDateKey(card.weekStart);
+    const nextOffset = Math.round((targetWeekStart.getTime() - startOfWeek(new Date()).getTime()) / (7 * 24 * 60 * 60 * 1000));
+    setWeekOffset(nextOffset);
+    setActiveCard(card);
+    setSearchOpen(false);
+
+    window.setTimeout(() => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = Math.max(0, (card.dayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2);
+      viewport.scrollTop = 0;
+    }, 80);
+  }
+
   return (
     <main className="hand-drawn-ui min-h-screen overflow-hidden bg-background text-foreground">
       <div className="journal-grain" />
@@ -439,6 +506,36 @@ function JournalApp() {
             </h1>
             <span className="h-7 w-px bg-zinc-300 dark:bg-zinc-700" />
             <p className="text-sm text-zinc-500 dark:text-zinc-400">{formatRange(weekStart, addDays(weekStart, 6))}</p>
+          </div>
+          <div className="relative min-w-[280px] flex-1 max-w-[560px]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+            <input
+              className="h-10 w-full rounded-lg border border-zinc-200/80 bg-white/90 px-9 pr-20 text-sm font-sans text-zinc-800 outline-none backdrop-blur-xl transition focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-100"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              placeholder="搜索关键词 / prompt"
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-sans text-zinc-400">
+              {searchLoading ? "搜索中" : searchResults.length ? `${searchResults.length} 个结果` : ""}
+            </span>
+            {searchOpen && searchQuery.trim() && (
+              <SearchResultsPanel
+                query={searchQuery}
+                results={searchResults}
+                suggestions={searchSuggestions}
+                loading={searchLoading}
+                onSuggestion={(keyword) => {
+                  setSearchQuery(keyword);
+                  setSearchOpen(true);
+                }}
+                onSelect={jumpToSearchResult}
+                onClose={() => setSearchOpen(false)}
+              />
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="上一周">
@@ -546,6 +643,7 @@ function JournalApp() {
                 onOpenPreview={setActiveCard}
                 onMoveCard={moveCard}
                 onCopy={notify}
+                onImageLoadError={() => void loadWeek(weekKey).then(setImages)}
                 cardPositions={cardPositions}
                 canvasScale={canvasScale}
                 pending={pending}
@@ -569,7 +667,13 @@ function JournalApp() {
           </motion.div>
         )}
       </AnimatePresence>
-      <ImagePreviewDialog card={activeCard} onClose={() => setActiveCard(null)} onDeleteKeyword={deleteKeyword} onCopy={notify} />
+      <ImagePreviewDialog
+        card={activeCard}
+        onClose={() => setActiveCard(null)}
+        onDeleteKeyword={deleteKeyword}
+        onCopy={notify}
+        onImageLoadError={() => void loadWeek(weekKey).then(setImages)}
+      />
     </main>
   );
 }
@@ -584,6 +688,7 @@ function DayColumn({
   onOpenPreview,
   onMoveCard,
   onCopy,
+  onImageLoadError,
   cardPositions,
   canvasScale,
   pending
@@ -597,6 +702,7 @@ function DayColumn({
   onOpenPreview: (card: InspirationImage) => void;
   onMoveCard: (id: string, position: CardPosition) => void;
   onCopy: (message: string) => void;
+  onImageLoadError: () => void;
   cardPositions: Record<string, CardPosition>;
   canvasScale: number;
   pending: Record<string, boolean>;
@@ -652,6 +758,7 @@ function DayColumn({
               onOpenPreview={onOpenPreview}
               onMoveCard={onMoveCard}
               onCopy={onCopy}
+              onImageLoadError={onImageLoadError}
               position={cardPositions[image.id]}
               canvasScale={canvasScale}
             />
@@ -668,6 +775,81 @@ function DayColumn({
   );
 }
 
+function SearchResultsPanel({
+  query,
+  results,
+  suggestions,
+  loading,
+  onSuggestion,
+  onSelect,
+  onClose
+}: {
+  query: string;
+  results: InspirationImage[];
+  suggestions: SearchSuggestion[];
+  loading: boolean;
+  onSuggestion: (keyword: string) => void;
+  onSelect: (card: InspirationImage) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="absolute left-0 right-0 top-12 z-50 isolate overflow-hidden rounded-xl border border-zinc-200 bg-white font-sans shadow-[0_20px_60px_rgba(0,0,0,.16)] dark:border-zinc-800 dark:bg-zinc-950"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-white px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+        <span>搜索 “{query.trim()}”</span>
+        <button className="rounded px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-900" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      {suggestions.length > 0 && (
+        <div className="border-b border-zinc-100 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mb-2 text-[11px] text-zinc-400">关键词联想</div>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion.keyword}
+                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                onClick={() => onSuggestion(suggestion.keyword)}
+              >
+                {suggestion.keyword}
+                {suggestion.count > 1 && <span className="ml-1 text-zinc-400">×{suggestion.count}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="max-h-[420px] overflow-auto bg-white p-2 dark:bg-zinc-950">
+        {loading && <div className="px-3 py-6 text-center text-sm text-zinc-500">搜索中...</div>}
+        {!loading && !results.length && <div className="px-3 py-6 text-center text-sm text-zinc-500">没有匹配图片</div>}
+        {!loading &&
+          results.map((card) => (
+            <button
+              key={card.id}
+              className="flex w-full gap-3 rounded-lg bg-white p-2 text-left transition hover:bg-zinc-100 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+              onClick={() => onSelect(card)}
+            >
+              <div className="h-16 w-12 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                {getCardImageSrc(card) ? <img className="h-full w-full object-cover" src={getCardImageSrc(card)} alt={card.title} /> : null}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex items-center gap-2 text-xs text-zinc-400">
+                  <span>{card.weekStart}</span>
+                  <span>{days[card.dayIndex]}</span>
+                </div>
+                <div className="truncate text-sm font-semibold text-zinc-800 dark:text-zinc-100">{card.keywords[0] || card.title}</div>
+                <div className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                  {[...(card.keywords || []), card.reversePrompt].filter(Boolean).join(" / ")}
+                </div>
+              </div>
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 function PolaroidCard({
   card,
   index,
@@ -677,6 +859,7 @@ function PolaroidCard({
   onOpenPreview,
   onMoveCard,
   onCopy,
+  onImageLoadError,
   position,
   canvasScale
 }: {
@@ -688,6 +871,7 @@ function PolaroidCard({
   onOpenPreview: (card: InspirationImage) => void;
   onMoveCard: (id: string, position: CardPosition) => void;
   onCopy: (message: string) => void;
+  onImageLoadError: () => void;
   position?: CardPosition;
   canvasScale: number;
 }) {
@@ -802,7 +986,7 @@ function PolaroidCard({
           }}
           aria-label="拖拽移动图片，点击放大查看"
         >
-          <img className="block h-auto w-full rounded-[1px]" draggable={false} src={getCardImageSrc(card)} alt={card.title} />
+          <img className="block h-auto w-full rounded-[1px]" draggable={false} src={getCardImageSrc(card)} alt={card.title} onError={onImageLoadError} />
         </button>
         <button
           className="image-float-button absolute left-1/2 top-1/2 z-20 grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-zinc-700 opacity-0 transition group-hover:opacity-100 dark:text-zinc-100"
@@ -890,12 +1074,14 @@ function ImagePreviewDialog({
   card,
   onClose,
   onDeleteKeyword,
-  onCopy
+  onCopy,
+  onImageLoadError
 }: {
   card: InspirationImage | null;
   onClose: () => void;
   onDeleteKeyword: (card: InspirationImage, keyword: string) => void;
   onCopy: (message: string) => void;
+  onImageLoadError: () => void;
 }) {
   const [imageMenu, setImageMenu] = React.useState<{ x: number; y: number } | null>(null);
   React.useEffect(() => {
@@ -922,6 +1108,7 @@ function ImagePreviewDialog({
             className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
             src={getCardImageSrc(card)}
             alt={card.title}
+            onError={onImageLoadError}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -985,6 +1172,11 @@ function addDays(date: Date, count: number) {
 
 function formatKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function parseDateKey(key: string) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year || 1970, (month || 1) - 1, day || 1);
 }
 
 function formatRange(start: Date, end: Date) {

@@ -54,6 +54,28 @@ app.get("/api/images", async (req, res, next) => {
   }
 });
 
+app.get("/api/search", async (req, res, next) => {
+  try {
+    const query = String(req.query.q || "");
+    const limit = Math.min(80, Math.max(1, Number(req.query.limit || 40)));
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    res.json(await withSignedImageUrls(await store.search(query, userId, limit)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/search/suggestions", async (req, res, next) => {
+  try {
+    const query = String(req.query.q || "");
+    const limit = Math.min(24, Math.max(1, Number(req.query.limit || 12)));
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    res.json(await store.suggestKeywords(query, userId, limit));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/auth/config", (_req, res) => {
   res.json({
     supabaseUrl: process.env.SUPABASE_URL || "",

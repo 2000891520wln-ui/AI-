@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -14,11 +14,55 @@ export function createStore(db: Database | null) {
     async listByWeek(weekStart: string, userId: string) {
       if (db) {
         return db.query.inspirationImages.findMany({
-          where: and(eq(inspirationImages.weekStart, weekStart), eq(inspirationImages.userId, userId)),
+          where: eq(inspirationImages.weekStart, weekStart),
           orderBy: [asc(inspirationImages.dayIndex), asc(inspirationImages.createdAt)]
         });
       }
       return [...memory.values()].filter((item) => item.weekStart === weekStart && canAccessLocalRow(item, userId));
+    },
+
+    async search(query: string, userId: string, limit = 40) {
+      const terms = normalizeSearchTerms(query);
+      if (!terms.length) return [];
+
+      const matches = (row: InspirationImage) => {
+        const haystack = [row.title, row.weekStart, row.reversePrompt, ...(row.keywords || [])].join("\n").toLowerCase();
+        return terms.every((term) => haystack.includes(term));
+      };
+
+      if (db) {
+        const rows = await db.query.inspirationImages.findMany({
+          orderBy: [desc(inspirationImages.updatedAt)]
+        });
+        return rows.filter(matches).slice(0, limit);
+      }
+
+      return [...memory.values()]
+        .filter((row) => canAccessLocalRow(row, userId) && matches(row))
+        .sort((left, right) => timestampOf(right.updatedAt) - timestampOf(left.updatedAt))
+        .slice(0, limit);
+    },
+
+    async suggestKeywords(query: string, userId: string, limit = 12) {
+      const terms = normalizeSearchTerms(query);
+      if (!terms.length) return [];
+      const rows = db
+        ? await db.query.inspirationImages.findMany({ orderBy: [desc(inspirationImages.updatedAt)] })
+        : [...memory.values()].filter((row) => canAccessLocalRow(row, userId));
+
+      const scores = new Map<string, number>();
+      for (const row of rows) {
+        for (const keyword of row.keywords || []) {
+          const normalizedKeyword = keyword.toLowerCase();
+          if (!terms.every((term) => normalizedKeyword.includes(term) || term.includes(normalizedKeyword))) continue;
+          scores.set(keyword, (scores.get(keyword) || 0) + 1);
+        }
+      }
+
+      return [...scores.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-Hans-CN"))
+        .slice(0, limit)
+        .map(([keyword, count]) => ({ keyword, count }));
     },
 
     async create(input: NewInspirationImage) {
@@ -48,7 +92,7 @@ export function createStore(db: Database | null) {
         const [row] = await db
           .update(inspirationImages)
           .set({ keywords, updatedAt: new Date() })
-          .where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)))
+          .where(eq(inspirationImages.id, id))
           .returning();
         return row;
       }
@@ -65,7 +109,7 @@ export function createStore(db: Database | null) {
         const [row] = await db
           .update(inspirationImages)
           .set({ ...analysis, updatedAt: new Date() })
-          .where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)))
+          .where(eq(inspirationImages.id, id))
           .returning();
         return row;
       }
@@ -79,7 +123,7 @@ export function createStore(db: Database | null) {
 
     async remove(id: string, userId: string) {
       if (db) {
-        await db.delete(inspirationImages).where(and(eq(inspirationImages.id, id), eq(inspirationImages.userId, userId)));
+        await db.delete(inspirationImages).where(eq(inspirationImages.id, id));
         return;
       }
       const row = memory.get(id);
@@ -91,6 +135,20 @@ export function createStore(db: Database | null) {
 
 function canAccessLocalRow(row: InspirationImage, userId: string) {
   return row.userId === userId || row.userId === "local-dev-user";
+}
+
+function normalizeSearchTerms(query: string) {
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+}
+
+function timestampOf(value: Date | string | null | undefined) {
+  if (!value) return 0;
+  return new Date(value).getTime();
 }
 
 function loadFallbackStore() {

@@ -83,7 +83,7 @@ const boardWidth = columnWidth * 7;
 const boardHeight = 3200;
 const uiStyles: Array<{ id: UiStyle; label: string; description: string }> = [
   { id: "journal", label: "手帐", description: "纸张、胶带和轻微错落排版" },
-  { id: "gallery", label: "画廊", description: "博物馆挂画、木质画框和作品铭牌" },
+  { id: "gallery", label: "漂浮", description: "无边界空间、分层漂浮卡片和纵深浏览" },
   { id: "archive", label: "档案", description: "馆藏目录、黑框图片和索引信息" }
 ];
 const defaultPromptTemplate = `请你作为一名资深视觉设计师和 AI 视觉风格分析师，基于用户上传的参考图反推出一段可复用的 AI 生图 prompt。
@@ -119,6 +119,7 @@ function JournalApp() {
   const [searchMode, setSearchMode] = React.useState(false);
   const [searchLoading, setSearchLoading] = React.useState(false);
   const [canvasScale, setCanvasScale] = React.useState(1);
+  const [galleryDepth, setGalleryDepth] = React.useState(0);
   const [cardPositions, setCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions());
   const [toast, setToast] = React.useState<string | null>(null);
   const toastTimerRef = React.useRef<number | null>(null);
@@ -126,6 +127,7 @@ function JournalApp() {
   const viewportRef = React.useRef<HTMLElement>(null);
   const searchBoxRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const floatingInputRef = React.useRef<HTMLInputElement>(null);
   const pinchDistanceRef = React.useRef<number | null>(null);
   const canvasPanRef = React.useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const centeredWeekRef = React.useRef<string | null>(null);
@@ -311,6 +313,11 @@ function JournalApp() {
     if (!viewport) return;
 
     const onWheel = (event: WheelEvent) => {
+      if (uiStyle === "gallery") {
+        event.preventDefault();
+        setGalleryDepth((current) => clamp(current - event.deltaY * 1.1, 0, images.length * 240 + 720));
+        return;
+      }
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       zoomCanvasAt(Math.exp(-event.deltaY * 0.002), event.clientX, event.clientY);
@@ -318,14 +325,14 @@ function JournalApp() {
 
     viewport.addEventListener("wheel", onWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [images.length, uiStyle]);
 
   function zoomCanvasAt(scaleFactor: number, clientX: number, clientY: number) {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
     setCanvasScale((previousScale) => {
-      const nextScale = clamp(previousScale * scaleFactor, 0.05, 12);
+      const nextScale = clamp(previousScale * scaleFactor, uiStyle === "gallery" ? 0.02 : 0.05, uiStyle === "gallery" ? 48 : 12);
       if (nextScale === previousScale) return previousScale;
 
       const rect = viewport.getBoundingClientRect();
@@ -750,6 +757,20 @@ function JournalApp() {
         <section
           ref={viewportRef}
           className={cn("canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]", searchMode && searchQuery.trim() && "hidden")}
+          onDoubleClick={(event) => {
+            if (uiStyle !== "gallery") return;
+            if ((event.target as HTMLElement).closest("[data-canvas-pan-ignore='true'], button, input, textarea, select, a")) return;
+            floatingInputRef.current?.click();
+          }}
+          onDragOver={(event) => {
+            if (uiStyle === "gallery") event.preventDefault();
+          }}
+          onDrop={(event) => {
+            if (uiStyle !== "gallery") return;
+            event.preventDefault();
+            const files = [...event.dataTransfer.files];
+            if (files.length) void addFilesToToday(files);
+          }}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onPointerDown={handleCanvasPointerDown}
@@ -757,6 +778,18 @@ function JournalApp() {
           onPointerUp={handleCanvasPointerEnd}
           onPointerCancel={handleCanvasPointerEnd}
         >
+          <input
+            ref={floatingInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              const files = [...(event.target.files || [])];
+              if (files.length) void addFilesToToday(files);
+              event.currentTarget.value = "";
+            }}
+          />
           <div
             className="canvas-space"
             style={{
@@ -790,12 +823,15 @@ function JournalApp() {
                   canvasScale={canvasScale}
                   pending={pending}
                   uiStyle={uiStyle}
+                  galleryDepth={galleryDepth}
+                  depthOffset={images.filter((image) => image.dayIndex < dayIndex).length}
+                  totalCards={images.length}
                 />
               ))}
             </div>
           </div>
           <div className="pointer-events-none fixed bottom-5 left-5 z-40 rounded-md border border-zinc-200/80 bg-white/88 px-3 py-2 text-[11px] font-medium text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-400">
-            {activeUiStyle.label} · {Math.round(canvasScale * 100)}%
+            {uiStyle === "gallery" ? `${activeUiStyle.label} · DEPTH ${Math.round(galleryDepth)}` : `${activeUiStyle.label} · ${Math.round(canvasScale * 100)}%`}
           </div>
         </section>
       <AnimatePresence>
@@ -835,7 +871,10 @@ function DayColumn({
   cardPositions,
   canvasScale,
   pending,
-  uiStyle
+  uiStyle,
+  galleryDepth,
+  depthOffset,
+  totalCards
 }: {
   date: Date;
   dayIndex: number;
@@ -851,6 +890,9 @@ function DayColumn({
   canvasScale: number;
   pending: Record<string, boolean>;
   uiStyle: UiStyle;
+  galleryDepth: number;
+  depthOffset: number;
+  totalCards: number;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = React.useState(false);
@@ -894,7 +936,7 @@ function DayColumn({
         className={cn(
           "day-card-grid grid content-start items-start",
           uiStyle === "journal" && "grid-cols-[repeat(auto-fill,180px)] gap-x-9 gap-y-12",
-          uiStyle === "gallery" && "grid-cols-[repeat(auto-fill,230px)] gap-x-7 gap-y-8",
+          uiStyle === "gallery" && "grid-cols-[repeat(auto-fill,170px)] gap-x-2 gap-y-8",
           uiStyle === "archive" && "grid-cols-[repeat(auto-fill,210px)] gap-x-8 gap-y-12"
         )}
       >
@@ -913,6 +955,9 @@ function DayColumn({
             position={cardPositions[image.id]}
             canvasScale={canvasScale}
             uiStyle={uiStyle}
+            galleryDepth={galleryDepth}
+            depthIndex={depthOffset + index}
+            totalCards={totalCards}
           />
         ))}
         {!images.length && (
@@ -1027,7 +1072,10 @@ function PolaroidCard({
   onImageLoadError,
   position,
   canvasScale,
-  uiStyle
+  uiStyle,
+  galleryDepth,
+  depthIndex,
+  totalCards
 }: {
   card: InspirationImage;
   index: number;
@@ -1041,6 +1089,9 @@ function PolaroidCard({
   position?: CardPosition;
   canvasScale: number;
   uiStyle: UiStyle;
+  galleryDepth: number;
+  depthIndex: number;
+  totalCards: number;
 }) {
   const [open, setOpen] = React.useState(false);
   const [imageLoaded, setImageLoaded] = React.useState(false);
@@ -1059,6 +1110,16 @@ function PolaroidCard({
   const imageSrc = getCardImageSrc(card);
   const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
+  const gallerySpacing = 240;
+  const galleryPhase = (depthIndex + 1) * gallerySpacing - galleryDepth;
+  const galleryNearness = Math.exp(-Math.max(0, galleryPhase) / 720);
+  const galleryScale = 0.24 + galleryNearness * 1.92;
+  const galleryFinalLayer = depthIndex >= Math.max(0, totalCards - 6);
+  const galleryOpacity = galleryPhase < 0
+    ? clamp(1 + galleryPhase / 180, 0, 1)
+    : galleryFinalLayer
+      ? 0.28 + galleryNearness * 0.72
+      : 1;
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
     displayImageSrcRef.current = displayImageSrc;
@@ -1171,19 +1232,20 @@ function PolaroidCard({
       style={{
         width: layout.width,
         rotate: `${uiStyle === "gallery" ? card.decoration.rotate * 0.18 : uiStyle === "archive" ? 0 : card.decoration.rotate}deg`,
-        translate: `${activePosition.x}px ${activePosition.y}px`
+        translate: `${activePosition.x}px ${activePosition.y}px`,
+        ...(uiStyle === "gallery"
+          ? ({
+              "--gallery-scale": galleryScale,
+              opacity: galleryOpacity,
+              zIndex: Math.round(galleryNearness * 40) + 1
+            } as React.CSSProperties)
+          : {})
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      {uiStyle === "gallery" && (
-        <div className="gallery-work-title" aria-hidden="true">
-          <span>{first}</span>
-          <small>Ver. {new Date(card.createdAt || card.updatedAt || Date.now()).getFullYear()}</small>
-        </div>
-      )}
       {uiStyle !== "gallery" && uiStyle !== "archive" && <DecorationIcon decoration={card.decoration} />}
       <button
         className="image-float-button absolute -right-3 -top-3 z-20 grid h-8 w-8 place-items-center rounded-full text-zinc-700 opacity-0 transition group-hover:opacity-100 dark:text-zinc-100"
@@ -1275,9 +1337,10 @@ function PolaroidCard({
         </div>
       </div>
       {uiStyle === "gallery" && (
-        <div className="gallery-work-meta" aria-hidden="true">
-          <span>Unique work</span>
-          <small>{card.keywords.slice(1, 3).join(" / ") || "Visual reference archive"}</small>
+        <div className="gallery-work-meta">
+          <strong>{first}</strong>
+          <span>{card.keywords.slice(1, 4).join(" / ") || "AI Journal visual study"}</span>
+          <small>{new Date(card.createdAt || card.updatedAt || Date.now()).getFullYear()}</small>
         </div>
       )}
     </article>
@@ -1475,12 +1538,14 @@ function randomDecoration(): Decoration {
 function cardLayout(index: number, uiStyle: UiStyle = "journal") {
   if (uiStyle === "gallery") {
     const layouts = [
-      { width: 210 },
-      { width: 224 },
-      { width: 216 },
-      { width: 232 },
-      { width: 208 },
-      { width: 226 }
+      { width: 132 },
+      { width: 168 },
+      { width: 118 },
+      { width: 214 },
+      { width: 146 },
+      { width: 188 },
+      { width: 104 },
+      { width: 238 }
     ];
     return layouts[index % layouts.length];
   }

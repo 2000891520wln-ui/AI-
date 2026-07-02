@@ -730,6 +730,16 @@ function JournalApp() {
 
     const todayIndex = findTodayIndex(days.map((_, index) => addDays(startOfWeek(new Date()), index)));
     if (todayIndex < 0) return;
+
+    const target = viewport.querySelector<HTMLElement>(`[data-day-index="${todayIndex}"] .polaroid-card`) || viewport.querySelector<HTMLElement>(`[data-day-index="${todayIndex}"] .day-heading`);
+    if (target) {
+      const viewportRect = viewport.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      viewport.scrollLeft = Math.max(0, viewport.scrollLeft + targetRect.left - viewportRect.left - (viewport.clientWidth - targetRect.width) / 2);
+      viewport.scrollTop = Math.max(0, viewport.scrollTop + targetRect.top - viewportRect.top - 112);
+      return;
+    }
+
     const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
     viewport.scrollLeft = Math.max(0, targetLeft);
     viewport.scrollTop = 0;
@@ -745,6 +755,7 @@ function JournalApp() {
     setWeekOffset(0);
     if (uiStyle === "gallery") setGalleryDepth(0);
     window.setTimeout(centerTodayContent, 80);
+    window.setTimeout(centerTodayContent, 220);
   }
 
   function jumpToSearchResult(card: InspirationImage) {
@@ -1039,6 +1050,7 @@ function DayColumn({
 
   return (
     <article
+      data-day-index={dayIndex}
       className={cn("group/day day-column relative px-7 pb-10 pt-10", dragging && "bg-amber-50/20 dark:bg-amber-300/5")}
       style={{ minHeight: `${boardHeight}px` }}
       onDoubleClick={(event) => {

@@ -44,6 +44,11 @@ const analyzeImageSchema = z.object({
   fast: z.boolean().optional()
 });
 
+const updateAnalysisSchema = z.object({
+  keywords: z.array(z.string()),
+  reversePrompt: z.string()
+});
+
 app.get("/api/images", async (req, res, next) => {
   try {
     const weekStart = String(req.query.weekStart || "");
@@ -177,6 +182,18 @@ app.patch("/api/images/:id/keywords", async (req, res, next) => {
     const userId = await getUserIdFromAuthHeader(req.headers.authorization);
     const keywords = z.array(z.string()).parse(req.body.keywords);
     const row = await store.updateKeywords(req.params.id, userId, keywords);
+    if (!row) return res.status(404).json({ error: "图片不存在" });
+    res.json(await withSignedImageUrl(row));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/images/:id/analysis", async (req, res, next) => {
+  try {
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    const analysis = updateAnalysisSchema.parse(req.body);
+    const row = await store.updateAnalysis(req.params.id, userId, analysis);
     if (!row) return res.status(404).json({ error: "图片不存在" });
     res.json(await withSignedImageUrl(row));
   } catch (error) {

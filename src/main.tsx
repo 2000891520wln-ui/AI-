@@ -76,6 +76,7 @@ const clips: Decoration["clip"][] = ["tape", "pin", "clip", "washi"];
 const localStorageKey = "design-terminology-journal";
 const deletedCardsStorageKey = "design-terminology-deleted-cards";
 const positionStorageKey = "design-terminology-card-positions";
+const galleryPositionStorageKey = "design-terminology-gallery-card-positions";
 const authTokenStorageKey = "journal-auth-token";
 const uiStyleStorageKey = "journal-ui-style";
 const columnWidth = 1200;
@@ -119,8 +120,10 @@ function JournalApp() {
   const [searchMode, setSearchMode] = React.useState(false);
   const [searchLoading, setSearchLoading] = React.useState(false);
   const [canvasScale, setCanvasScale] = React.useState(1);
+  const styleScaleRef = React.useRef<Record<UiStyle, number>>({ journal: 0.76, gallery: 1, archive: 0.42 });
   const [galleryDepth, setGalleryDepth] = React.useState(0);
   const [cardPositions, setCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions());
+  const [galleryCardPositions, setGalleryCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions(galleryPositionStorageKey));
   const [toast, setToast] = React.useState<string | null>(null);
   const toastTimerRef = React.useRef<number | null>(null);
   const [promptTemplate, setPromptTemplate] = React.useState(() => localStorage.getItem("journal-prompt-template") || defaultTemplate);
@@ -137,6 +140,7 @@ function JournalApp() {
   const recentPasteSignatureRef = React.useRef<{ signature: string; at: number } | null>(null);
   const pasteInFlightRef = React.useRef(false);
   const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
+  const analysisRetryIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
@@ -145,10 +149,16 @@ function JournalApp() {
 
   const activeUiStyle = React.useMemo(() => uiStyles.find((style) => style.id === uiStyle) || uiStyles[0], [uiStyle]);
   const nextUiStyle = React.useCallback(() => {
-    setUiStyle((current) => {
-      const index = uiStyles.findIndex((style) => style.id === current);
-      return uiStyles[(index + 1) % uiStyles.length].id;
-    });
+    styleScaleRef.current[uiStyle] = canvasScale;
+    const index = uiStyles.findIndex((style) => style.id === uiStyle);
+    const nextStyle = uiStyles[(index + 1) % uiStyles.length].id;
+    setCanvasScale(styleScaleRef.current[nextStyle]);
+    setUiStyle(nextStyle);
+  }, [canvasScale, uiStyle]);
+
+  React.useEffect(() => {
+    styleScaleRef.current = { journal: 0.76, gallery: 1, archive: 0.42 };
+    setCanvasScale(styleScaleRef.current[uiStyle]);
   }, []);
 
   React.useEffect(() => {
@@ -161,6 +171,85 @@ function JournalApp() {
   React.useEffect(() => {
     imagesRef.current = images;
   }, [images]);
+
+  const disconnectedAnalysisSignature = images
+    .filter((card) => card.keywords.includes("AI 未连接") && Boolean(getCardImageSrc(card)))
+    .map((card) => card.id)
+    .join("|");
+
+  React.useEffect(() => {
+    const retryableCards = images.filter(
+      (card) => card.keywords.includes("AI 未连接") && Boolean(getCardImageSrc(card)) && !analysisRetryIdsRef.current.has(card.id)
+    );
+    if (!retryableCards.length) return;
+
+    let cancelled = false;
+    void (async () => {
+      const statusResponse = await fetch("/api/ai/status").catch(() => null);
+      const status = statusResponse?.ok ? await statusResponse.json().catch(() => null) : null;
+      if (!status?.configured || cancelled) return;
+
+      for (const card of retryableCards) {
+        if (cancelled) return;
+        analysisRetryIdsRef.current.add(card.id);
+        setPending((current) => ({ ...current, [card.id]: true }));
+        try {
+          const response = await fetch("/api/analyze-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageDataUrl: getCardImageSrc(card), promptTemplate })
+          });
+          if (!response.ok) throw new Error("AI 重新分析失败");
+          const analysis = (await response.json()) as { keywords: string[]; reversePrompt: string };
+          if (cancelled) return;
+
+          setImages((current) =>
+            persistLocal(
+              weekKey,
+              current.map((item) =>
+                item.id === card.id
+                  ? { ...item, keywords: analysis.keywords, reversePrompt: analysis.reversePrompt, analysisNote: "AI 已重新连接并完成分析" }
+                  : item
+              )
+            )
+          );
+
+          if (!card.id.startsWith("temp-")) {
+            void fetch(`/api/images/${card.id}/analysis`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+              body: JSON.stringify(analysis)
+            }).catch(() => undefined);
+          }
+        } catch {
+          analysisRetryIdsRef.current.delete(card.id);
+        } finally {
+          if (!cancelled) {
+            setPending((current) => {
+              const next = { ...current };
+              delete next[card.id];
+              return next;
+            });
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [disconnectedAnalysisSignature, promptTemplate, weekKey]);
+
+  React.useEffect(() => {
+    setCardPositions((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([, position]) => Math.abs(position.x) <= columnWidth && Math.abs(position.y) <= boardHeight)
+      );
+      if (Object.keys(next).length === Object.keys(current).length) return current;
+      savePositions(next);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     loadWeek(weekKey).then(setImages);
@@ -193,15 +282,26 @@ function JournalApp() {
   React.useEffect(() => {
     const viewport = viewportRef.current;
     const todayIndex = findTodayIndex(weekDates);
-    if (!viewport || todayIndex < 0 || centeredWeekRef.current === weekKey) return;
+    const centerKey = `${weekKey}:${uiStyle}`;
+    if (!viewport || uiStyle === "gallery" || todayIndex < 0 || centeredWeekRef.current === centerKey) return;
 
-    centeredWeekRef.current = weekKey;
+    centeredWeekRef.current = centerKey;
     requestAnimationFrame(() => {
       const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
       viewport.scrollLeft = Math.max(0, targetLeft);
       viewport.scrollTop = 0;
     });
-  }, [canvasScale, weekDates, weekKey]);
+  }, [canvasScale, uiStyle, weekDates, weekKey]);
+
+  React.useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || uiStyle !== "gallery") return;
+
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = Math.max(0, (boardWidth * canvasScale - viewport.clientWidth) / 2);
+      viewport.scrollTop = Math.max(0, (boardHeight * canvasScale - viewport.clientHeight) / 2);
+    });
+  }, [canvasScale, uiStyle, weekKey]);
 
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
@@ -347,9 +447,11 @@ function JournalApp() {
   }
 
   function moveCard(id: string, position: CardPosition) {
-    setCardPositions((current) => {
+    const updatePositions = uiStyle === "gallery" ? setGalleryCardPositions : setCardPositions;
+    const storageKey = uiStyle === "gallery" ? galleryPositionStorageKey : positionStorageKey;
+    updatePositions((current) => {
       const next = { ...current, [id]: position };
-      savePositions(next);
+      savePositions(next, storageKey);
       return next;
     });
   }
@@ -600,6 +702,13 @@ function JournalApp() {
       savePositions(next);
       return next;
     });
+    setGalleryCardPositions((current) => {
+      if (!current[card.id]) return current;
+      const next = { ...current };
+      delete next[card.id];
+      savePositions(next, galleryPositionStorageKey);
+      return next;
+    });
     setImages((current) => persistLocal(weekKey, current.filter((item) => item.id !== card.id)));
     await fetch(`/api/images/${card.id}`, {
       method: "DELETE",
@@ -819,7 +928,7 @@ function JournalApp() {
                   onMoveCard={moveCard}
                   onCopy={notify}
                   onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
-                  cardPositions={cardPositions}
+                  cardPositions={uiStyle === "gallery" ? galleryCardPositions : cardPositions}
                   canvasScale={canvasScale}
                   pending={pending}
                   uiStyle={uiStyle}
@@ -1112,8 +1221,8 @@ function PolaroidCard({
   const activePosition = draftPosition || position || { x: 0, y: 0 };
   const gallerySpacing = 240;
   const galleryPhase = (depthIndex + 1) * gallerySpacing - galleryDepth;
-  const galleryNearness = Math.exp(-Math.max(0, galleryPhase) / 720);
-  const galleryScale = 0.24 + galleryNearness * 1.92;
+  const galleryNearness = Math.exp(-Math.max(0, galleryPhase) / 840);
+  const galleryScale = (0.38 + galleryNearness * 1.78) * 1.2;
   const galleryFinalLayer = depthIndex >= Math.max(0, totalCards - 6);
   const galleryOpacity = galleryPhase < 0
     ? clamp(1 + galleryPhase / 180, 0, 1)
@@ -1797,16 +1906,16 @@ function fallbackCopyText(text: string) {
   if (!copied) throw new Error("copy failed");
 }
 
-function readPositions(): Record<string, CardPosition> {
+function readPositions(storageKey = positionStorageKey): Record<string, CardPosition> {
   try {
-    return JSON.parse(localStorage.getItem(positionStorageKey) || "{}") as Record<string, CardPosition>;
+    return JSON.parse(localStorage.getItem(storageKey) || "{}") as Record<string, CardPosition>;
   } catch {
     return {};
   }
 }
 
-function savePositions(positions: Record<string, CardPosition>) {
-  localStorage.setItem(positionStorageKey, JSON.stringify(positions));
+function savePositions(positions: Record<string, CardPosition>, storageKey = positionStorageKey) {
+  localStorage.setItem(storageKey, JSON.stringify(positions));
 }
 
 function readLocal(weekKey: string): InspirationImage[] {
@@ -1925,6 +2034,7 @@ function MigrationExport() {
       JSON.stringify({
         [localStorageKey]: localStorage.getItem(localStorageKey),
         [positionStorageKey]: localStorage.getItem(positionStorageKey),
+        [galleryPositionStorageKey]: localStorage.getItem(galleryPositionStorageKey),
         [uiStyleStorageKey]: localStorage.getItem(uiStyleStorageKey),
         "journal-theme": localStorage.getItem("journal-theme"),
         "journal-prompt-template": localStorage.getItem("journal-prompt-template")
@@ -1966,12 +2076,14 @@ function tryImportMigrationData(text: string, notify: (message: string) => void)
 
     const journal = value[localStorageKey];
     const positions = value[positionStorageKey];
+    const galleryPositions = value[galleryPositionStorageKey];
     const uiStyle = value[uiStyleStorageKey];
     const theme = value["journal-theme"];
     const template = value["journal-prompt-template"];
 
     if (typeof journal === "string") localStorage.setItem(localStorageKey, journal);
     if (typeof positions === "string") localStorage.setItem(positionStorageKey, positions);
+    if (typeof galleryPositions === "string") localStorage.setItem(galleryPositionStorageKey, galleryPositions);
     if (typeof uiStyle === "string") localStorage.setItem(uiStyleStorageKey, uiStyle);
     if (typeof theme === "string") localStorage.setItem("journal-theme", theme);
     if (typeof template === "string") localStorage.setItem("journal-prompt-template", template);

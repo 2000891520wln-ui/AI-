@@ -237,15 +237,19 @@ body {
 }
 
 .ui-style-gallery .weekly-board {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(6, 190px) !important;
+  grid-auto-rows: 150px;
   justify-content: center;
-  align-content: start;
+  align-content: center;
   align-items: start;
-  gap: 84px 46px;
-  padding: 180px 0 480px;
+  gap: 60px 30px;
+  padding: 0;
   background-color: rgba(255, 255, 255, 0.46);
   background-image: none;
+  will-change: left;
+  animation: gallery-scene-drift 18.2s ease-in-out infinite alternate;
 }
 
 .ui-style-gallery .day-column,
@@ -391,7 +395,7 @@ body {
   animation-name: gallery-float-far;
   animation-duration: 24s;
   animation-delay: -9s;
-  filter: saturate(0.88) blur(0.35px);
+  filter: saturate(0.88);
 }
 
 .ui-style-gallery .polaroid-card:nth-child(4n + 2) {
@@ -410,7 +414,7 @@ body {
   animation-name: gallery-float-far;
   animation-duration: 28s;
   animation-delay: -17s;
-  filter: saturate(0.72) blur(0.65px);
+  filter: saturate(0.72);
 }
 
 .ui-style-gallery .polaroid-card:nth-child(5n) {
@@ -478,9 +482,23 @@ body {
   }
 }
 
+@keyframes gallery-scene-drift {
+  0% {
+    left: -300px;
+  }
+  100% {
+    left: 300px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ui-style-gallery .polaroid-card {
     animation: none;
+  }
+
+  .ui-style-gallery .weekly-board {
+    animation: none;
+    left: 0;
   }
 }
 

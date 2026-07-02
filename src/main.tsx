@@ -40,6 +40,7 @@ type InspirationImage = {
   imageDataUrl?: string | null;
   imageUrl?: string | null;
   storagePath?: string | null;
+  sourceFingerprint?: string;
   keywords: string[];
   reversePrompt: string;
   decoration: Decoration;
@@ -106,7 +107,7 @@ function JournalApp() {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [searchResults, setSearchResults] = React.useState<InspirationImage[]>([]);
   const [searchSuggestions, setSearchSuggestions] = React.useState<SearchSuggestion[]>([]);
-  const [searchOpen, setSearchOpen] = React.useState(false);
+  const [searchMode, setSearchMode] = React.useState(false);
   const [searchLoading, setSearchLoading] = React.useState(false);
   const [canvasScale, setCanvasScale] = React.useState(1);
   const [cardPositions, setCardPositions] = React.useState<Record<string, CardPosition>>(() => readPositions());
@@ -121,6 +122,9 @@ function JournalApp() {
   const pendingCreateIdsRef = React.useRef(new Set<string>());
   const deletedCardIdsRef = React.useRef(readDeletedCards());
   const recentPasteSignatureRef = React.useRef<{ signature: string; at: number } | null>(null);
+  const pasteInFlightRef = React.useRef(false);
+  const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
+  const imagesRef = React.useRef<InspirationImage[]>([]);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
   const weekDates = React.useMemo(() => days.map((_, index) => addDays(weekStart, index)), [weekStart]);
@@ -130,6 +134,10 @@ function JournalApp() {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("journal-theme", dark ? "dark" : "light");
   }, [dark]);
+
+  React.useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
 
   React.useEffect(() => {
     loadWeek(weekKey).then(setImages);
@@ -182,6 +190,7 @@ function JournalApp() {
       setSearchResults([]);
       setSearchSuggestions([]);
       setSearchLoading(false);
+      setSearchMode(false);
       return;
     }
 
@@ -228,16 +237,39 @@ function JournalApp() {
 
       const files = imageFilesFromClipboard(event.clipboardData);
       if (!files.length) return;
+      const globalWindow = window as Window & { __journalPasteLockAt?: number };
+      const globalNow = Date.now();
+      if (globalWindow.__journalPasteLockAt && globalNow - globalWindow.__journalPasteLockAt < 1800) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      globalWindow.__journalPasteLockAt = globalNow;
+      if (pasteInFlightRef.current) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const signature = files.map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`).join("|");
       const previousPaste = recentPasteSignatureRef.current;
       const now = Date.now();
       if (previousPaste && previousPaste.signature === signature && now - previousPaste.at < 1200) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         return;
       }
       recentPasteSignatureRef.current = { signature, at: now };
+      pasteInFlightRef.current = true;
       event.preventDefault();
-      void addFilesToToday(files);
+      event.stopImmediatePropagation();
+      void addFilesToToday(files).finally(() => {
+        window.setTimeout(() => {
+          pasteInFlightRef.current = false;
+        }, 250);
+        window.setTimeout(() => {
+          if (globalWindow.__journalPasteLockAt === globalNow) delete globalWindow.__journalPasteLockAt;
+        }, 1800);
+      });
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -373,9 +405,23 @@ function JournalApp() {
   }
 
   async function addFiles(files: File[], dayIndex: number, targetWeekKey = weekKey) {
+    const batchFingerprints = new Set<string>();
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
       const imageDataUrl = await fileToDataUrl(file);
+      const sourceFingerprint = await fingerprintDataUrl(imageDataUrl);
+      if (batchFingerprints.has(sourceFingerprint)) continue;
+      batchFingerprints.add(sourceFingerprint);
+      const nowMs = Date.now();
+      for (const [fingerprint, timestamp] of recentImageFingerprintsRef.current) {
+        if (nowMs - timestamp > 15000) recentImageFingerprintsRef.current.delete(fingerprint);
+      }
+      const alreadyCreating = recentImageFingerprintsRef.current.has(sourceFingerprint);
+      const alreadyOnBoard = imagesRef.current.some(
+        (item) => item.weekStart === targetWeekKey && item.dayIndex === dayIndex && item.sourceFingerprint === sourceFingerprint
+      );
+      if (alreadyCreating || alreadyOnBoard) continue;
+      recentImageFingerprintsRef.current.set(sourceFingerprint, nowMs);
       const tempId = `temp-${crypto.randomUUID()}`;
       pendingCreateIdsRef.current.add(tempId);
       setCardPositions((current) => {
@@ -394,6 +440,7 @@ function JournalApp() {
         dayIndex,
         title: file.name || "pasted screenshot",
         imageDataUrl,
+        sourceFingerprint,
         decoration,
         keywords: ["分析中"],
         reversePrompt: "AI 正在分析视觉风格并生成反推 prompt...",
@@ -431,7 +478,7 @@ function JournalApp() {
           persistLocal(
             targetWeekKey,
             current.map((item) =>
-              item.id === tempId ? { ...resolved, clientId: tempId, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" } : item
+              item.id === tempId ? { ...resolved, clientId: tempId, sourceFingerprint, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" } : item
             )
           )
         );
@@ -451,6 +498,7 @@ function JournalApp() {
           ...optimistic,
           id: crypto.randomUUID(),
           clientId: tempId,
+          sourceFingerprint,
           keywords: ["AI 未连接"],
           reversePrompt: "没有配置可用的 GPT/Gemini API Key，应用无法根据图片生成真实关键词和 prompt。",
           analysisNote: `AI 接口未完成：${message}`
@@ -521,7 +569,7 @@ function JournalApp() {
     const nextOffset = Math.round((targetWeekStart.getTime() - startOfWeek(new Date()).getTime()) / (7 * 24 * 60 * 60 * 1000));
     setWeekOffset(nextOffset);
     setActiveCard(card);
-    setSearchOpen(false);
+    setSearchMode(false);
 
     window.setTimeout(() => {
       const viewport = viewportRef.current;
@@ -529,6 +577,14 @@ function JournalApp() {
       viewport.scrollLeft = Math.max(0, (card.dayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2);
       viewport.scrollTop = 0;
     }, 80);
+  }
+
+  function closeSearchPage() {
+    setSearchMode(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchSuggestions([]);
+    setSearchLoading(false);
   }
 
   return (
@@ -550,28 +606,18 @@ function JournalApp() {
               value={searchQuery}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
-                setSearchOpen(true);
+                setSearchMode(Boolean(event.target.value.trim()));
               }}
-              onFocus={() => setSearchOpen(true)}
+              onFocus={() => setSearchMode(Boolean(searchQuery.trim()))}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setSearchMode(false);
+                if (event.key === "Enter" && searchQuery.trim()) setSearchMode(true);
+              }}
               placeholder="搜索关键词 / prompt"
             />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-sans text-zinc-400">
               {searchLoading ? "搜索中" : searchResults.length ? `${searchResults.length} 个结果` : ""}
             </span>
-            {searchOpen && searchQuery.trim() && (
-              <SearchResultsPanel
-                query={searchQuery}
-                results={searchResults}
-                suggestions={searchSuggestions}
-                loading={searchLoading}
-                onSuggestion={(keyword) => {
-                  setSearchQuery(keyword);
-                  setSearchOpen(true);
-                }}
-                onSelect={jumpToSearchResult}
-                onClose={() => setSearchOpen(false)}
-              />
-            )}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="上一周">
@@ -641,56 +687,70 @@ function JournalApp() {
         </section>
       )}
 
-      <section
-        ref={viewportRef}
-        className="canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]"
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onPointerDown={handleCanvasPointerDown}
-        onPointerMove={handleCanvasPointerMove}
-        onPointerUp={handleCanvasPointerEnd}
-        onPointerCancel={handleCanvasPointerEnd}
-      >
-        <div
-          className="canvas-space"
-          style={{
-            width: `${boardWidth * canvasScale + 2400}px`,
-            minHeight: `${boardHeight * canvasScale + 1600}px`
+      {searchMode && searchQuery.trim() && (
+        <SearchResultsPage
+          query={searchQuery}
+          results={searchResults}
+          suggestions={searchSuggestions}
+          loading={searchLoading}
+          onSuggestion={(keyword) => {
+            setSearchQuery(keyword);
+            setSearchMode(true);
           }}
+          onSelect={jumpToSearchResult}
+          onClose={closeSearchPage}
+        />
+      )}
+        <section
+          ref={viewportRef}
+          className={cn("canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]", searchMode && searchQuery.trim() && "hidden")}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerEnd}
+          onPointerCancel={handleCanvasPointerEnd}
         >
           <div
-            className="weekly-board grid origin-top-left grid-cols-7 overflow-visible bg-white/78 dark:bg-zinc-950/52"
+            className="canvas-space"
             style={{
-              width: `${boardWidth}px`,
-              minHeight: `${boardHeight}px`,
-              gridTemplateColumns: `repeat(7, ${columnWidth}px)`,
-              transform: `scale(${canvasScale})`
+              width: `${boardWidth * canvasScale + 2400}px`,
+              minHeight: `${boardHeight * canvasScale + 1600}px`
             }}
           >
-            {weekDates.map((date, dayIndex) => (
-              <DayColumn
-                key={formatKey(date)}
-                date={date}
-                dayIndex={dayIndex}
-                images={images.filter((image) => image.dayIndex === dayIndex)}
-                onFiles={addFiles}
-                onDeleteCard={deleteCard}
-                onDeleteKeyword={deleteKeyword}
-                onOpenPreview={setActiveCard}
-                onMoveCard={moveCard}
-                onCopy={notify}
-                onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
-                cardPositions={cardPositions}
-                canvasScale={canvasScale}
-                pending={pending}
-              />
-            ))}
+            <div
+              className="weekly-board grid origin-top-left grid-cols-7 overflow-visible bg-white/78 dark:bg-zinc-950/52"
+              style={{
+                width: `${boardWidth}px`,
+                minHeight: `${boardHeight}px`,
+                gridTemplateColumns: `repeat(7, ${columnWidth}px)`,
+                transform: `scale(${canvasScale})`
+              }}
+            >
+              {weekDates.map((date, dayIndex) => (
+                <DayColumn
+                  key={formatKey(date)}
+                  date={date}
+                  dayIndex={dayIndex}
+                  images={images.filter((image) => image.dayIndex === dayIndex)}
+                  onFiles={addFiles}
+                  onDeleteCard={deleteCard}
+                  onDeleteKeyword={deleteKeyword}
+                  onOpenPreview={setActiveCard}
+                  onMoveCard={moveCard}
+                  onCopy={notify}
+                  onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
+                  cardPositions={cardPositions}
+                  canvasScale={canvasScale}
+                  pending={pending}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="pointer-events-none fixed bottom-5 left-5 z-40 rounded-md border border-zinc-200/80 bg-white/88 px-3 py-2 text-[11px] font-medium text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-400">
-          {Math.round(canvasScale * 100)}%
-        </div>
-      </section>
+          <div className="pointer-events-none fixed bottom-5 left-5 z-40 rounded-md border border-zinc-200/80 bg-white/88 px-3 py-2 text-[11px] font-medium text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/88 dark:text-zinc-400">
+            {Math.round(canvasScale * 100)}%
+          </div>
+        </section>
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -811,7 +871,7 @@ function DayColumn({
   );
 }
 
-function SearchResultsPanel({
+function SearchResultsPage({
   query,
   results,
   suggestions,
@@ -829,24 +889,32 @@ function SearchResultsPanel({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="absolute left-0 right-0 top-12 z-50 isolate overflow-hidden rounded-xl border border-zinc-200 bg-white font-sans shadow-[0_20px_60px_rgba(0,0,0,.16)] dark:border-zinc-800 dark:bg-zinc-950"
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-white px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-        <span>搜索 “{query.trim()}”</span>
-        <button className="rounded px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-900" onClick={onClose}>
-          关闭
-        </button>
-      </div>
+    <section className="h-screen overflow-auto bg-white px-5 pb-16 pt-[96px] font-sans dark:bg-zinc-950">
+      <div className="mx-auto max-w-[1680px]">
+        <div className="mb-5">
+          <button
+            className="search-back-button mb-5 grid h-9 w-9 place-items-center rounded-full border border-zinc-200 bg-white text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+            onClick={onClose}
+            aria-label="返回周历"
+            title="返回周历"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[.18em] text-zinc-400">Search Results</p>
+            <h2 className="mt-2 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">搜索 “{query.trim()}”</h2>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{loading ? "正在匹配关键词和 prompt" : `${results.length} 张图片匹配`}</p>
+          </div>
+        </div>
+
       {suggestions.length > 0 && (
-        <div className="border-b border-zinc-100 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mb-2 text-[11px] text-zinc-400">关键词联想</div>
-          <div className="flex flex-wrap gap-1.5">
+        <div className="mb-5 rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/45">
+          <div className="mb-3 text-xs text-zinc-400">关键词联想</div>
+          <div className="flex flex-wrap gap-2">
             {suggestions.map((suggestion) => (
               <button
                 key={suggestion.keyword}
-                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
                 onClick={() => onSuggestion(suggestion.keyword)}
               >
                 {suggestion.keyword}
@@ -856,33 +924,39 @@ function SearchResultsPanel({
           </div>
         </div>
       )}
-      <div className="max-h-[420px] overflow-auto bg-white p-2 dark:bg-zinc-950">
-        {loading && <div className="px-3 py-6 text-center text-sm text-zinc-500">搜索中...</div>}
-        {!loading && !results.length && <div className="px-3 py-6 text-center text-sm text-zinc-500">没有匹配图片</div>}
+
+      <div>
+        {loading && <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-14 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/45">搜索中...</div>}
+        {!loading && !results.length && <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-14 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/45">没有匹配图片</div>}
         {!loading &&
-          results.map((card) => (
+          results.length > 0 && (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+              {results.map((card) => (
             <button
               key={card.id}
-              className="flex w-full gap-3 rounded-lg bg-white p-2 text-left transition hover:bg-zinc-100 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+              className="group overflow-hidden rounded-xl border border-zinc-200 bg-white text-left transition hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
               onClick={() => onSelect(card)}
             >
-              <div className="h-16 w-12 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-                {getCardImageSrc(card) ? <img className="h-full w-full object-cover" src={getCardImageSrc(card)} alt={card.title} /> : null}
+              <div className="aspect-[4/5] overflow-hidden bg-zinc-100 dark:bg-zinc-800">
+                {getCardImageSrc(card) ? <img className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" src={getCardImageSrc(card)} alt={card.title} loading="lazy" /> : null}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="mb-1 flex items-center gap-2 text-xs text-zinc-400">
+              <div className="p-3">
+                <div className="mb-2 flex items-center gap-2 text-xs text-zinc-400">
                   <span>{card.weekStart}</span>
                   <span>{days[card.dayIndex]}</span>
                 </div>
-                <div className="truncate text-sm font-semibold text-zinc-800 dark:text-zinc-100">{card.keywords[0] || card.title}</div>
-                <div className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                <div className="truncate text-base font-semibold text-zinc-800 dark:text-zinc-100">{card.keywords[0] || card.title}</div>
+                <div className="mt-2 line-clamp-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
                   {[...(card.keywords || []), card.reversePrompt].filter(Boolean).join(" / ")}
                 </div>
               </div>
             </button>
-          ))}
+              ))}
+            </div>
+          )}
       </div>
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -1355,10 +1429,11 @@ function delay(ms: number) {
 
 function imageFilesFromClipboard(clipboardData: DataTransfer | null) {
   if (!clipboardData) return [];
-  return [...clipboardData.items]
+  const files = [...clipboardData.items]
     .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
     .map((item) => item.getAsFile())
     .filter(Boolean) as File[];
+  return files.sort((left, right) => right.size - left.size).slice(0, 1);
 }
 
 function fileToDataUrl(file: File) {
@@ -1368,6 +1443,15 @@ function fileToDataUrl(file: File) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+async function fingerprintDataUrl(dataUrl: string) {
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(dataUrl));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return `${dataUrl.length}:${dataUrl.slice(0, 256)}:${dataUrl.slice(-256)}`;
+  }
 }
 
 async function imageDataUrlToAnalysisPreview(imageDataUrl: string) {
@@ -1583,7 +1667,15 @@ function readDefaultPromptTemplate() {
 function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[]) {
   const rows = new Map<string, InspirationImage>();
   for (const row of localRows) rows.set(row.id, row);
-  for (const row of serverRows) rows.set(row.id, row);
+  for (const row of serverRows) {
+    const local = rows.get(row.id);
+    rows.set(row.id, {
+      ...local,
+      ...row,
+      clientId: local?.clientId,
+      sourceFingerprint: local?.sourceFingerprint
+    });
+  }
   return [...rows.values()].sort((left, right) => {
     if (left.dayIndex !== right.dayIndex) return left.dayIndex - right.dayIndex;
     return timestampOf(left.createdAt) - timestampOf(right.createdAt);

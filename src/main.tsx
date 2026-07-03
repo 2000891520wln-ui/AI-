@@ -841,18 +841,7 @@ function JournalApp() {
   }
 
   function jumpToSearchResult(card: InspirationImage) {
-    const targetWeekStart = parseDateKey(card.weekStart);
-    const nextOffset = Math.round((targetWeekStart.getTime() - startOfWeek(new Date()).getTime()) / (7 * 24 * 60 * 60 * 1000));
-    setWeekOffset(nextOffset);
     setActiveCard(card);
-    setSearchMode(false);
-
-    window.setTimeout(() => {
-      const viewport = viewportRef.current;
-      if (!viewport) return;
-      viewport.scrollLeft = Math.max(0, (card.dayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2);
-      viewport.scrollTop = 0;
-    }, 80);
   }
 
   function closeSearchPage() {

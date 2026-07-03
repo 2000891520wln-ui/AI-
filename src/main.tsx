@@ -982,7 +982,10 @@ function JournalApp() {
       )}
         <section
           ref={viewportRef}
-          className={cn("canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]", searchMode && searchQuery.trim() && "hidden")}
+          className={cn(
+            "canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]",
+            searchMode && searchQuery.trim() && "pointer-events-none fixed inset-0 opacity-0"
+          )}
           onDoubleClick={(event) => {
             if (uiStyle !== "gallery") return;
             if ((event.target as HTMLElement).closest("[data-canvas-pan-ignore='true'], button, input, textarea, select, a")) return;

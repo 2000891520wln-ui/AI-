@@ -37,6 +37,7 @@ type InspirationImage = {
   weekStart: string;
   dayIndex: number;
   title: string;
+  previewUrl?: string;
   imageDataUrl?: string | null;
   imageUrl?: string | null;
   storagePath?: string | null;
@@ -140,6 +141,7 @@ function JournalApp() {
   const deletedCardIdsRef = React.useRef(readDeletedCards());
   const recentPasteSignatureRef = React.useRef<{ signature: string; at: number } | null>(null);
   const pasteInFlightRef = React.useRef(false);
+  const recentFileSignaturesRef = React.useRef(new Map<string, number>());
   const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
   const analysisRetryIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
@@ -295,15 +297,12 @@ function JournalApp() {
     });
   }, [canvasScale, uiStyle, weekDates, weekKey]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || uiStyle !== "gallery") return;
 
-    requestAnimationFrame(() => {
-      viewport.scrollLeft = Math.max(0, (boardWidth * canvasScale - viewport.clientWidth) / 2);
-      viewport.scrollTop = Math.max(0, (boardHeight * canvasScale - viewport.clientHeight) / 2);
-    });
-  }, [canvasScale, uiStyle, weekKey]);
+    centerGalleryContent();
+  }, [canvasScale, images.length, uiStyle, weekKey]);
 
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
@@ -397,14 +396,13 @@ function JournalApp() {
       pasteInFlightRef.current = true;
       event.preventDefault();
       event.stopImmediatePropagation();
-      void addFilesToToday(files).finally(() => {
-        window.setTimeout(() => {
-          pasteInFlightRef.current = false;
-        }, 250);
-        window.setTimeout(() => {
-          if (globalWindow.__journalPasteLockAt === globalNow) delete globalWindow.__journalPasteLockAt;
-        }, 1800);
-      });
+      void addFilesToToday(files).catch(() => undefined);
+      window.setTimeout(() => {
+        pasteInFlightRef.current = false;
+      }, 350);
+      window.setTimeout(() => {
+        if (globalWindow.__journalPasteLockAt === globalNow) delete globalWindow.__journalPasteLockAt;
+      }, 1800);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -550,10 +548,66 @@ function JournalApp() {
     const batchFingerprints = new Set<string>();
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
-      const imageAspectRatio = await imageAspectRatioFromFile(file);
-      const imageDataUrl = await fileToDataUrl(file);
-      const sourceFingerprint = await fingerprintDataUrl(imageDataUrl);
-      if (batchFingerprints.has(sourceFingerprint)) continue;
+      const fileSignature = fileSignatureOf(file);
+      const signatureNow = Date.now();
+      for (const [signature, timestamp] of recentFileSignaturesRef.current) {
+        if (signatureNow - timestamp > 15000) recentFileSignaturesRef.current.delete(signature);
+      }
+      if (recentFileSignaturesRef.current.has(fileSignature)) continue;
+      recentFileSignaturesRef.current.set(fileSignature, signatureNow);
+      const tempId = `temp-${crypto.randomUUID()}`;
+      const previewUrl = URL.createObjectURL(file);
+      const decoration = randomDecoration();
+      const now = new Date().toISOString();
+      const optimistic: InspirationImage = {
+        id: tempId,
+        clientId: tempId,
+        weekStart: targetWeekKey,
+        dayIndex,
+        title: file.name || "pasted screenshot",
+        previewUrl,
+        decoration,
+        keywords: ["分析中"],
+        reversePrompt: "AI 正在分析视觉风格并生成反推 prompt...",
+        analysisNote: "正在处理图片",
+        createdAt: now,
+        updatedAt: now
+      };
+
+      pendingCreateIdsRef.current.add(tempId);
+      setImages((current) => persistLocal(targetWeekKey, [...current, optimistic]));
+      setPending((current) => ({ ...current, [tempId]: true }));
+
+      let imageAspectRatio: number | undefined;
+      let imageDataUrl = "";
+      let sourceFingerprint = "";
+      try {
+        [imageAspectRatio, imageDataUrl] = await Promise.all([imageAspectRatioFromFile(file), fileToDataUrl(file)]);
+        sourceFingerprint = await fingerprintDataUrl(imageDataUrl);
+      } catch {
+        recentFileSignaturesRef.current.delete(fileSignature);
+        URL.revokeObjectURL(previewUrl);
+        pendingCreateIdsRef.current.delete(tempId);
+        setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setPending((current) => {
+          const next = { ...current };
+          delete next[tempId];
+          return next;
+        });
+        continue;
+      }
+      if (batchFingerprints.has(sourceFingerprint)) {
+        recentFileSignaturesRef.current.delete(fileSignature);
+        URL.revokeObjectURL(previewUrl);
+        pendingCreateIdsRef.current.delete(tempId);
+        setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setPending((current) => {
+          const next = { ...current };
+          delete next[tempId];
+          return next;
+        });
+        continue;
+      }
       batchFingerprints.add(sourceFingerprint);
       const nowMs = Date.now();
       for (const [fingerprint, timestamp] of recentImageFingerprintsRef.current) {
@@ -563,10 +617,19 @@ function JournalApp() {
       const alreadyOnBoard = imagesRef.current.some(
         (item) => item.weekStart === targetWeekKey && item.dayIndex === dayIndex && item.sourceFingerprint === sourceFingerprint
       );
-      if (alreadyCreating || alreadyOnBoard) continue;
+      if (alreadyCreating || alreadyOnBoard) {
+        recentFileSignaturesRef.current.delete(fileSignature);
+        URL.revokeObjectURL(previewUrl);
+        pendingCreateIdsRef.current.delete(tempId);
+        setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setPending((current) => {
+          const next = { ...current };
+          delete next[tempId];
+          return next;
+        });
+        continue;
+      }
       recentImageFingerprintsRef.current.set(sourceFingerprint, nowMs);
-      const tempId = `temp-${crypto.randomUUID()}`;
-      pendingCreateIdsRef.current.add(tempId);
       setCardPositions((current) => {
         if (!current[tempId]) return current;
         const next = { ...current };
@@ -574,26 +637,8 @@ function JournalApp() {
         savePositions(next);
         return next;
       });
-      const decoration = randomDecoration();
-      const now = new Date().toISOString();
-      const optimistic: InspirationImage = {
-        id: tempId,
-        clientId: tempId,
-        weekStart: targetWeekKey,
-        dayIndex,
-        title: file.name || "pasted screenshot",
-        imageDataUrl,
-        sourceFingerprint,
-        imageAspectRatio,
-        decoration,
-        keywords: ["分析中"],
-        reversePrompt: "AI 正在分析视觉风格并生成反推 prompt...",
-        analysisNote: "正在调用 AI",
-        createdAt: now,
-        updatedAt: now
-      };
-      setImages((current) => persistLocal(targetWeekKey, [...current, optimistic]));
-      setPending((current) => ({ ...current, [tempId]: true }));
+      const uploadReadyOptimistic = { ...optimistic, imageDataUrl, sourceFingerprint, imageAspectRatio, analysisNote: "正在调用 AI" };
+      setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === tempId ? uploadReadyOptimistic : item))));
 
       try {
         const analysisImageDataUrl = await imageDataUrlToAnalysisPreview(imageDataUrl);
@@ -641,9 +686,10 @@ function JournalApp() {
       } catch (error) {
         const message = error instanceof Error ? error.message : "AI 分析接口调用失败";
         const fallback = {
-          ...optimistic,
+          ...uploadReadyOptimistic,
           id: crypto.randomUUID(),
           clientId: tempId,
+          previewUrl: undefined,
           sourceFingerprint,
           imageAspectRatio,
           keywords: ["AI 未连接"],
@@ -652,6 +698,7 @@ function JournalApp() {
         };
         setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === tempId ? fallback : item))));
       } finally {
+        URL.revokeObjectURL(previewUrl);
         pendingCreateIdsRef.current.delete(tempId);
         setPending((current) => {
           const next = { ...current };
@@ -723,8 +770,7 @@ function JournalApp() {
     if (!viewport) return;
 
     if (uiStyle === "gallery") {
-      viewport.scrollLeft = Math.max(0, (boardWidth * canvasScale - viewport.clientWidth) / 2);
-      viewport.scrollTop = Math.max(0, (boardHeight * canvasScale - viewport.clientHeight) / 2);
+      centerGalleryContent();
       return;
     }
 
@@ -743,6 +789,33 @@ function JournalApp() {
     const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
     viewport.scrollLeft = Math.max(0, targetLeft);
     viewport.scrollTop = 0;
+  }
+
+  function centerGalleryContent() {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const cards = [...viewport.querySelectorAll<HTMLElement>(".polaroid-card")]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const opacity = Number.parseFloat(getComputedStyle(element).opacity || "1");
+        return { element, rect, opacity, area: rect.width * rect.height };
+      })
+      .filter(({ rect, opacity }) => rect.width > 0 && rect.height > 0 && opacity > 0.12);
+
+    if (!cards.length) {
+      viewport.scrollLeft = Math.max(0, (boardWidth * canvasScale - viewport.clientWidth) / 2);
+      viewport.scrollTop = Math.max(0, (boardHeight * canvasScale - viewport.clientHeight) / 2);
+      return;
+    }
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const rightmost = cards.reduce((right, card) => Math.max(right, card.rect.right), Number.NEGATIVE_INFINITY);
+    const topmost = cards.reduce((top, card) => Math.min(top, card.rect.top), Number.POSITIVE_INFINITY);
+    const bottommost = cards.reduce((bottom, card) => Math.max(bottom, card.rect.bottom), Number.NEGATIVE_INFINITY);
+    const groupHeight = bottommost - topmost;
+    viewport.scrollLeft = Math.max(0, viewport.scrollLeft + rightmost - (viewportRect.right - 100));
+    viewport.scrollTop = Math.max(0, viewport.scrollTop + topmost - viewportRect.top - (viewport.clientHeight - groupHeight) / 2);
   }
 
   function goToToday() {
@@ -1092,7 +1165,7 @@ function DayColumn({
         className={cn(
           "day-card-grid grid content-start items-start",
           uiStyle === "journal" && "grid-cols-[repeat(auto-fill,180px)] gap-x-9 gap-y-12",
-          uiStyle === "gallery" && "grid-cols-[repeat(auto-fill,170px)] gap-x-2 gap-y-8",
+          uiStyle === "gallery" && "grid-cols-[repeat(auto-fill,170px)] gap-x-[50px] gap-y-8",
           uiStyle === "archive" && "grid-cols-[repeat(auto-fill,210px)] gap-x-8 gap-y-12"
         )}
       >
@@ -1292,10 +1365,16 @@ function PolaroidCard({
     }
     if (!displayImageSrcRef.current) {
       setDisplayImageSrc(imageSrc);
-      setImageLoaded(false);
+      setImageLoaded(imageSrc.startsWith("blob:"));
       return;
     }
     if (imageSrc === displayImageSrcRef.current) return;
+
+    if (displayImageSrcRef.current.startsWith("blob:") && imageSrc.startsWith("data:")) {
+      setDisplayImageSrc(imageSrc);
+      setImageLoaded(true);
+      return;
+    }
 
     let cancelled = false;
     const nextImage = new Image();
@@ -1797,6 +1876,10 @@ function imageFilesFromClipboard(clipboardData: DataTransfer | null) {
   return files.sort((left, right) => right.size - left.size).slice(0, 1);
 }
 
+function fileSignatureOf(file: File) {
+  return `${file.name || "clipboard-image"}:${file.type}:${file.size}:${file.lastModified}`;
+}
+
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -1916,7 +1999,7 @@ async function imageSrcToPngBlob(imageSrc: string) {
 }
 
 function getCardImageSrc(card: InspirationImage) {
-  return card.imageUrl || card.imageDataUrl || "";
+  return card.previewUrl || card.imageUrl || card.imageDataUrl || "";
 }
 
 let supabaseClient: SupabaseClient | null = null;
@@ -2000,7 +2083,7 @@ function readLocal(weekKey: string): InspirationImage[] {
 function saveLocal(weekKey: string, rows: InspirationImage[]) {
   try {
     const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
-    all[weekKey] = rows;
+    all[weekKey] = rows.map(stripTransientCardFields);
     localStorage.setItem(localStorageKey, JSON.stringify(all));
   } catch {
     // Large image collections can exceed browser storage quota; the API remains the source of truth.
@@ -2010,6 +2093,11 @@ function saveLocal(weekKey: string, rows: InspirationImage[]) {
 function persistLocal(weekKey: string, rows: InspirationImage[]) {
   saveLocal(weekKey, rows);
   return rows;
+}
+
+function stripTransientCardFields(card: InspirationImage) {
+  const { previewUrl, ...persisted } = card;
+  return persisted;
 }
 
 function readDeletedCards() {

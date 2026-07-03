@@ -143,6 +143,7 @@ function JournalApp() {
   const pasteInFlightRef = React.useRef(false);
   const recentFileSignaturesRef = React.useRef(new Map<string, number>());
   const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
+  const imageRefreshAttemptsRef = React.useRef(new Map<string, number>());
   const analysisRetryIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
@@ -470,6 +471,14 @@ function JournalApp() {
       if (sameCards(current, nextRows)) return current;
       return persistLocal(targetWeekKey, nextRows);
     });
+  }
+
+  function refreshCardImage(card: InspirationImage) {
+    const now = Date.now();
+    const previous = imageRefreshAttemptsRef.current.get(card.id) || 0;
+    if (now - previous < 60_000) return;
+    imageRefreshAttemptsRef.current.set(card.id, now);
+    void loadWeek(card.weekStart).then((rows) => applySyncedRows(rows, card.weekStart));
   }
 
   function handleTouchStart(event: React.TouchEvent<HTMLElement>) {
@@ -1046,7 +1055,7 @@ function JournalApp() {
                   onOpenPreview={setActiveCard}
                   onMoveCard={moveCard}
                   onCopy={notify}
-                  onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
+                  onImageLoadError={refreshCardImage}
                   cardPositions={uiStyle === "gallery" ? galleryCardPositions : cardPositions}
                   canvasScale={canvasScale}
                   pending={pending}
@@ -1079,7 +1088,7 @@ function JournalApp() {
         onClose={() => setActiveCard(null)}
         onDeleteKeyword={deleteKeyword}
         onCopy={notify}
-        onImageLoadError={() => void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey))}
+        onImageLoadError={refreshCardImage}
       />
     </main>
   );
@@ -1113,7 +1122,7 @@ function DayColumn({
   onOpenPreview: (card: InspirationImage) => void;
   onMoveCard: (id: string, position: CardPosition) => void;
   onCopy: (message: string) => void;
-  onImageLoadError: () => void;
+  onImageLoadError: (card: InspirationImage) => void;
   cardPositions: Record<string, CardPosition>;
   canvasScale: number;
   pending: Record<string, boolean>;
@@ -1314,7 +1323,7 @@ function PolaroidCard({
   onOpenPreview: (card: InspirationImage) => void;
   onMoveCard: (id: string, position: CardPosition) => void;
   onCopy: (message: string) => void;
-  onImageLoadError: () => void;
+  onImageLoadError: (card: InspirationImage) => void;
   position?: CardPosition;
   canvasScale: number;
   uiStyle: UiStyle;
@@ -1323,11 +1332,8 @@ function PolaroidCard({
   totalCards: number;
 }) {
   const [open, setOpen] = React.useState(false);
-  const [imageLoaded, setImageLoaded] = React.useState(false);
-  const [displayImageSrc, setDisplayImageSrc] = React.useState("");
+  const [imageFailed, setImageFailed] = React.useState(false);
   const cardRef = React.useRef<HTMLElement | null>(null);
-  const displayImageSrcRef = React.useRef("");
-  const onImageLoadErrorRef = React.useRef(onImageLoadError);
   const closeTimerRef = React.useRef<number | null>(null);
   const dragRef = React.useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
   const latestPositionRef = React.useRef<CardPosition>({ x: 0, y: 0 });
@@ -1352,45 +1358,7 @@ function PolaroidCard({
       : 1;
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
-    displayImageSrcRef.current = displayImageSrc;
-  }, [displayImageSrc]);
-  React.useEffect(() => {
-    onImageLoadErrorRef.current = onImageLoadError;
-  }, [onImageLoadError]);
-  React.useEffect(() => {
-    if (!imageSrc) {
-      setDisplayImageSrc("");
-      setImageLoaded(true);
-      return;
-    }
-    if (!displayImageSrcRef.current) {
-      setDisplayImageSrc(imageSrc);
-      setImageLoaded(imageSrc.startsWith("blob:"));
-      return;
-    }
-    if (imageSrc === displayImageSrcRef.current) return;
-
-    if (displayImageSrcRef.current.startsWith("blob:") && imageSrc.startsWith("data:")) {
-      setDisplayImageSrc(imageSrc);
-      setImageLoaded(true);
-      return;
-    }
-
-    let cancelled = false;
-    const nextImage = new Image();
-    nextImage.onload = () => {
-      if (cancelled) return;
-      setDisplayImageSrc(imageSrc);
-      setImageLoaded(true);
-    };
-    nextImage.onerror = () => {
-      if (cancelled) return;
-      onImageLoadErrorRef.current();
-    };
-    nextImage.src = imageSrc;
-    return () => {
-      cancelled = true;
-    };
+    setImageFailed(false);
   }, [imageSrc]);
   const showPanel = React.useCallback(() => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
@@ -1505,22 +1473,23 @@ function PolaroidCard({
             className="relative block w-full overflow-hidden rounded-[1px] bg-zinc-100 dark:bg-zinc-200"
             style={{ aspectRatio: uiStyle === "archive" ? "4 / 5" : imageAspectRatio }}
           >
-            {!imageLoaded && (
-              <span className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,rgba(244,244,245,.92),rgba(255,255,255,.98),rgba(244,244,245,.92))] dark:bg-[linear-gradient(110deg,rgba(228,228,231,.9),rgba(255,255,255,.98),rgba(228,228,231,.9))]" />
+            {imageFailed && (
+              <span className="absolute inset-0 grid place-items-center bg-zinc-100 px-3 text-center text-[10px] font-medium text-zinc-400 dark:bg-zinc-200">
+                图片暂不可用
+              </span>
             )}
-            {displayImageSrc ? (
+            {imageSrc && !imageFailed ? (
               <img
-                className={cn("block h-auto w-full rounded-[1px] transition-opacity duration-150", imageLoaded ? "opacity-100" : "opacity-0")}
+                className="block h-auto w-full rounded-[1px] opacity-100"
                 style={{ height: "100%", objectFit: uiStyle === "archive" ? "cover" : "contain" }}
                 draggable={false}
-                src={displayImageSrc}
+                src={imageSrc}
                 alt={card.title}
                 loading="eager"
                 decoding="async"
-                onLoad={() => setImageLoaded(true)}
                 onError={() => {
-                  setImageLoaded(true);
-                  onImageLoadError();
+                  setImageFailed(true);
+                  onImageLoadError(card);
                 }}
               />
             ) : null}
@@ -1646,7 +1615,7 @@ function ImagePreviewDialog({
   onClose: () => void;
   onDeleteKeyword: (card: InspirationImage, keyword: string) => void;
   onCopy: (message: string) => void;
-  onImageLoadError: () => void;
+  onImageLoadError: (card: InspirationImage) => void;
 }) {
   const [imageMenu, setImageMenu] = React.useState<{ x: number; y: number } | null>(null);
   React.useEffect(() => {
@@ -1673,7 +1642,7 @@ function ImagePreviewDialog({
             className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
             src={getCardImageSrc(card)}
             alt={card.title}
-            onError={onImageLoadError}
+            onError={() => onImageLoadError(card)}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -1999,7 +1968,7 @@ async function imageSrcToPngBlob(imageSrc: string) {
 }
 
 function getCardImageSrc(card: InspirationImage) {
-  return card.previewUrl || card.imageUrl || card.imageDataUrl || "";
+  return card.previewUrl || card.imageDataUrl || card.imageUrl || "";
 }
 
 let supabaseClient: SupabaseClient | null = null;
@@ -2178,6 +2147,9 @@ function sameCards(left: InspirationImage[], right: InspirationImage[]) {
       next &&
       item.id === next.id &&
       item.updatedAt === next.updatedAt &&
+      item.imageUrl === next.imageUrl &&
+      item.imageDataUrl === next.imageDataUrl &&
+      item.storagePath === next.storagePath &&
       item.keywords.join("\u0000") === next.keywords.join("\u0000") &&
       item.reversePrompt === next.reversePrompt
     );

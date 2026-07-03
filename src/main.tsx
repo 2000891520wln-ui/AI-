@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  Download,
   Maximize2,
   Paperclip,
   Pin,
@@ -969,12 +968,6 @@ function JournalApp() {
             {uiStyle === "archive" && <Archive className="h-4 w-4" />}
           </span>
         </button>
-        <button className="grid h-11 w-11 place-items-center border-b" aria-label="导出">
-          <Download className="h-4 w-4" />
-        </button>
-        <button className="grid h-11 w-11 place-items-center text-red-500" aria-label="清理">
-          <Trash2 className="h-4 w-4" />
-        </button>
       </aside>
 
       {templateOpen && (
@@ -1390,6 +1383,14 @@ function PolaroidCard({
   const galleryPhase = (galleryRank + 1) * gallerySpacing - galleryDepth;
   const galleryNearness = Math.exp(-Math.max(0, galleryPhase) / 840);
   const galleryScale = (0.38 + galleryNearness * 1.78) * 1.2;
+  const galleryColumns = 6;
+  const galleryRowPitch = 210;
+  const galleryRow = Math.floor(depthIndex / galleryColumns);
+  const galleryRows = Math.max(1, Math.ceil(totalCards / galleryColumns));
+  const galleryCenterPull = uiStyle === "gallery"
+    ? clamp((((galleryRows - 1) / 2 - galleryRow) * galleryRowPitch * galleryNearness * 0.62), -360, 360)
+    : 0;
+  const galleryCenterDrift = uiStyle === "gallery" ? ((depthIndex % 5) - 2) * 12 * galleryNearness : 0;
   const galleryFinalLayer = galleryRank >= Math.max(0, totalCards - 6);
   const galleryOpacity = galleryPhase < 0
     ? clamp(1 + galleryPhase / 180, 0, 1)
@@ -1504,7 +1505,7 @@ function PolaroidCard({
       style={{
         width: layout.width,
         rotate: `${uiStyle === "gallery" ? card.decoration.rotate * 0.18 : uiStyle === "archive" ? 0 : card.decoration.rotate}deg`,
-        translate: `${activePosition.x}px ${activePosition.y}px`,
+        translate: `${activePosition.x}px ${activePosition.y + galleryCenterPull + galleryCenterDrift}px`,
         ...(uiStyle === "gallery"
           ? ({
               "--gallery-scale": galleryScale,

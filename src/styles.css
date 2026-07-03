@@ -484,12 +484,12 @@ body {
 }
 
 .ui-style-gallery .polaroid-card:nth-child(7n + 2) {
-  margin-top: 118px;
+  margin-top: 76px;
 }
 
 .ui-style-gallery .polaroid-card:nth-child(9n + 4) {
   margin-left: 76px;
-  margin-top: -86px;
+  margin-top: -54px;
 }
 
 .ui-style-gallery .polaroid-card:nth-child(6n + 1) {

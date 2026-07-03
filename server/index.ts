@@ -8,7 +8,7 @@ import { createDb } from "./db/client";
 import type { InspirationImage } from "./db/schema";
 import { analyzeDesignImage, getAiStatus } from "./openai";
 import { createStore } from "./store";
-import { createSignedImageUrl, getUserIdFromAuthHeader, uploadImageToStorage } from "./supabase";
+import { createSignedImageUrl, getUserIdFromAuthHeader, isSupabaseConfigured, uploadImageToStorage } from "./supabase";
 
 loadEnvFile();
 
@@ -47,6 +47,10 @@ const analyzeImageSchema = z.object({
 const updateAnalysisSchema = z.object({
   keywords: z.array(z.string()),
   reversePrompt: z.string()
+});
+
+const signedUrlsSchema = z.object({
+  storagePaths: z.array(z.string().min(1)).max(300)
 });
 
 app.get("/api/images", async (req, res, next) => {
@@ -91,6 +95,32 @@ app.get("/api/auth/config", (_req, res) => {
 
 app.get("/api/ai/status", (_req, res) => {
   res.json(getAiStatus());
+});
+
+app.post("/api/storage/signed-urls", async (req, res, next) => {
+  try {
+    const isLocalRecoveryRequest = isLocalRequest(req);
+    const userId = isLocalRecoveryRequest ? "" : await getUserIdFromAuthHeader(req.headers.authorization);
+    const input = signedUrlsSchema.parse(req.body);
+    const storagePaths = [...new Set(input.storagePaths)];
+    const urls: Record<string, string> = {};
+
+    for (const storagePath of storagePaths) {
+      if (
+        isSupabaseConfigured() &&
+        !isLocalRecoveryRequest &&
+        !storagePath.startsWith(`${userId}/`) &&
+        !storagePath.startsWith("local-dev-user/")
+      ) {
+        continue;
+      }
+      urls[storagePath] = await createSignedImageUrl(storagePath);
+    }
+
+    res.json({ urls });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/analyze-image", async (req, res, next) => {
@@ -244,6 +274,17 @@ function loadEnvFile() {
     const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
     if (key && process.env[key] === undefined) process.env[key] = value;
   }
+}
+
+function isLocalRequest(req: express.Request) {
+  const origin = String(req.headers.origin || "");
+  const host = String(req.headers.host || "");
+  return (
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:") ||
+    host.startsWith("localhost:") ||
+    host.startsWith("127.0.0.1:")
+  );
 }
 
 async function withSignedImageUrls(rows: InspirationImage[]) {

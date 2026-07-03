@@ -61,6 +61,8 @@ type SearchSuggestion = {
   count: number;
 };
 
+const loadedImageSourceCache = new Map<string, string>();
+
 type UiStyle = "journal" | "gallery" | "archive";
 
 type AuthConfig = {
@@ -476,8 +478,21 @@ function JournalApp() {
   function refreshCardImage(card: InspirationImage) {
     const now = Date.now();
     const previous = imageRefreshAttemptsRef.current.get(card.id) || 0;
-    if (now - previous < 60_000) return;
+    if (now - previous < 5_000) return;
     imageRefreshAttemptsRef.current.set(card.id, now);
+    if (card.storagePath && !card.imageDataUrl) {
+      void refreshSignedImageUrls([{ ...card, imageUrl: null }]).then(([refreshedCard]) => {
+        if (!refreshedCard?.imageUrl || refreshedCard.imageUrl === card.imageUrl) return;
+        loadedImageSourceCache.delete(card.clientId || card.id);
+        setImages((current) =>
+          persistLocal(
+            card.weekStart,
+            current.map((item) => (item.id === card.id ? { ...item, imageUrl: refreshedCard.imageUrl } : item))
+          )
+        );
+      });
+      return;
+    }
     void loadWeek(card.weekStart).then((rows) => applySyncedRows(rows, card.weekStart));
   }
 
@@ -538,7 +553,9 @@ function JournalApp() {
 
   async function loadWeek(key: string) {
     const deletedIds = currentDeletedCards(deletedCardIdsRef);
-    const localRows = readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
+    const localRows = await refreshSignedImageUrls(
+      readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard)
+    );
     try {
       const response = await fetch(`/api/images?weekStart=${key}`, {
         headers: await getAuthHeaders()
@@ -550,6 +567,34 @@ function JournalApp() {
       return rows;
     } catch {
       return localRows;
+    }
+  }
+
+  async function refreshSignedImageUrls(rows: InspirationImage[]) {
+    const storagePaths = [
+      ...new Set(
+        rows
+          .filter((row) => row.storagePath && !row.imageDataUrl && !row.imageUrl)
+          .map((row) => row.storagePath as string)
+      )
+    ];
+    if (!storagePaths.length) return rows;
+
+    try {
+      const response = await fetch("/api/storage/signed-urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+        body: JSON.stringify({ storagePaths })
+      });
+      if (!response.ok) return rows;
+      const payload = (await response.json()) as { urls?: Record<string, string> };
+      const urls = payload.urls || {};
+      return rows.map((row) => {
+        const nextImageUrl = row.storagePath ? urls[row.storagePath] : "";
+        return nextImageUrl ? { ...row, imageUrl: nextImageUrl } : row;
+      });
+    } catch {
+      return rows;
     }
   }
 
@@ -1335,6 +1380,9 @@ function PolaroidCard({
   const extra = Math.max(0, card.keywords.length - 1);
   const layout = cardLayout(index, uiStyle);
   const imageSrc = getCardImageSrc(card);
+  const imageCacheKey = card.clientId || card.id;
+  const [renderImageSrc, setRenderImageSrc] = React.useState(() => loadedImageSourceCache.get(imageCacheKey) || imageSrc);
+  const [stableImageSrc, setStableImageSrc] = React.useState(() => loadedImageSourceCache.get(imageCacheKey) || "");
   const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
   const gallerySpacing = 240;
@@ -1351,7 +1399,35 @@ function PolaroidCard({
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
     setImageFailed(false);
-  }, [imageSrc]);
+    if (!imageSrc) {
+      setRenderImageSrc("");
+      return;
+    }
+    if (imageSrc.startsWith("data:") || imageSrc.startsWith("blob:")) {
+      loadedImageSourceCache.set(imageCacheKey, imageSrc);
+      setStableImageSrc(imageSrc);
+      setRenderImageSrc(imageSrc);
+      return;
+    }
+    const cachedImageSrc = loadedImageSourceCache.get(imageCacheKey);
+    if (cachedImageSrc) setStableImageSrc(cachedImageSrc);
+    setRenderImageSrc(cachedImageSrc || imageSrc);
+  }, [imageCacheKey, imageSrc]);
+  React.useEffect(() => {
+    if (!imageSrc || loadedImageSourceCache.has(imageCacheKey)) return;
+    let cancelled = false;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      if (cancelled) return;
+      loadedImageSourceCache.set(imageCacheKey, imageSrc);
+      setStableImageSrc(imageSrc);
+    };
+    image.src = imageSrc;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageCacheKey, imageSrc]);
   const showPanel = React.useCallback(() => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
     setOpen(true);
@@ -1463,23 +1539,39 @@ function PolaroidCard({
         >
           <span
             className="relative block w-full overflow-hidden rounded-[1px] bg-zinc-100 dark:bg-zinc-200"
-            style={{ aspectRatio: uiStyle === "archive" ? "4 / 5" : imageAspectRatio }}
+            style={{
+              aspectRatio: uiStyle === "archive" ? "4 / 5" : imageAspectRatio,
+              backgroundImage: stableImageSrc ? `url(${JSON.stringify(stableImageSrc)})` : undefined,
+              backgroundPosition: "center",
+              backgroundRepeat: "no-repeat",
+              backgroundSize: uiStyle === "archive" ? "cover" : "contain"
+            }}
           >
             {imageFailed && (
               <span className="absolute inset-0 grid place-items-center bg-zinc-100 px-3 text-center text-[10px] font-medium text-zinc-400 dark:bg-zinc-200">
                 图片暂不可用
               </span>
             )}
-            {imageSrc && !imageFailed ? (
+            {renderImageSrc && !imageFailed ? (
               <img
                 className="block h-auto w-full rounded-[1px] opacity-100"
                 style={{ height: "100%", objectFit: uiStyle === "archive" ? "cover" : "contain" }}
                 draggable={false}
-                src={imageSrc}
+                src={renderImageSrc}
                 alt={card.title}
                 loading="eager"
                 decoding="async"
+                onLoad={() => {
+                  loadedImageSourceCache.set(imageCacheKey, renderImageSrc);
+                  setStableImageSrc(renderImageSrc);
+                }}
                 onError={() => {
+                  if (renderImageSrc !== imageSrc && imageSrc) {
+                    loadedImageSourceCache.delete(imageCacheKey);
+                    setRenderImageSrc(imageSrc);
+                    return;
+                  }
+                  loadedImageSourceCache.delete(imageCacheKey);
                   setImageFailed(true);
                   onImageLoadError(card);
                 }}
@@ -1614,6 +1706,10 @@ function ImagePreviewDialog({
     if (!card) setImageMenu(null);
   }, [card?.id]);
 
+  const imageCacheKey = card ? card.clientId || card.id : "";
+  const imageSrc = card ? getCardImageSrc(card) : "";
+  const previewImageSrc = imageCacheKey ? loadedImageSourceCache.get(imageCacheKey) || imageSrc : imageSrc;
+
   if (!card) return null;
   return (
     <div className="fixed inset-0 z-50 bg-zinc-950/58 p-6 backdrop-blur-sm" onClick={onClose} onContextMenu={() => setImageMenu(null)}>
@@ -1632,9 +1728,15 @@ function ImagePreviewDialog({
           </button>
           <img
             className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-            src={getCardImageSrc(card)}
+            src={previewImageSrc}
             alt={card.title}
-            onError={() => onImageLoadError(card)}
+            onLoad={() => {
+              if (previewImageSrc) loadedImageSourceCache.set(imageCacheKey, previewImageSrc);
+            }}
+            onError={() => {
+              if (previewImageSrc === imageSrc) loadedImageSourceCache.delete(imageCacheKey);
+              onImageLoadError(card);
+            }}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -2109,10 +2211,15 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
       ...row,
       clientId: local?.clientId,
       sourceFingerprint: local?.sourceFingerprint,
-      imageAspectRatio: local?.imageAspectRatio
+      imageAspectRatio: local?.imageAspectRatio,
+      imageUrl: shouldKeepLocalImageUrl(local, row) ? local?.imageUrl : row.imageUrl
     });
   }
   return order.map((id) => rows.get(id)).filter(Boolean) as InspirationImage[];
+}
+
+function shouldKeepLocalImageUrl(local: InspirationImage | undefined, next: InspirationImage) {
+  return Boolean(local?.imageUrl && local.storagePath && local.storagePath === next.storagePath && !local.imageDataUrl);
 }
 
 function timestampOf(value?: string) {
@@ -2139,7 +2246,7 @@ function sameCards(left: InspirationImage[], right: InspirationImage[]) {
       next &&
       item.id === next.id &&
       item.updatedAt === next.updatedAt &&
-      item.imageUrl === next.imageUrl &&
+      (item.storagePath && item.storagePath === next.storagePath ? true : item.imageUrl === next.imageUrl) &&
       item.imageDataUrl === next.imageDataUrl &&
       item.storagePath === next.storagePath &&
       item.keywords.join("\u0000") === next.keywords.join("\u0000") &&

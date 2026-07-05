@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MusePrompt Logo Options</title>
+    <style>
+      :root {
+        color: #2c251d;
+        background: #fbf7ee;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+
+      p {
+        margin: 0 0 28px;
+        color: #6f6255;
+        line-height: 1.7;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 18px;
+      }
+
+      .card {
+        border: 1px solid rgba(44, 37, 29, 0.12);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.72);
+        padding: 18px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: 72px;
+      }
+
+      img {
+        display: block;
+      }
+
+      h2 {
+        margin: 16px 0 6px;
+        font-size: 15px;
+      }
+
+      .note {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .sizes {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px;
+        border-radius: 8px;
+        background: #2c251d;
+      }
+
+      .selected {
+        border-color: rgba(240, 184, 97, 0.72);
+        background: rgba(255, 247, 223, 0.82);
+      }
+
+      .section-title {
+        margin: 34px 0 14px;
+        font-size: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MusePrompt Logo Options</h1>
+    <p>每版都按网页标签/favicon 优先设计，保留 64px、32px、16px 三种小尺寸预览。</p>
+    <h2 class="section-title">M5E 延展：手写星星</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5i-hand-star.svg" width="64" height="64" alt="M5I" />
+          <div class="sizes">
+            <img src="./museprompt-m5i-hand-star.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5i-hand-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5I. Hand Star</h2>
+        <p class="note">不规则实心星，像手画出来的 AI 闪光，最干净。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5j-scribble-star.svg" width="64" height="64" alt="M5J" />
+          <div class="sizes">
+            <img src="./museprompt-m5j-scribble-star.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5j-scribble-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5J. Scribble Star</h2>
+        <p class="note">涂鸦描边星，手写感最强，但小尺寸会更轻。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5k-ink-spark.svg" width="64" height="64" alt="M5K" />
+          <div class="sizes">
+            <img src="./museprompt-m5k-ink-spark.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5k-ink-spark.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5K. Ink Spark</h2>
+        <p class="note">墨点感星星，增加两个小光点，更有灵感闪现的感觉。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5l-doodle-star.svg" width="64" height="64" alt="M5L" />
+          <div class="sizes">
+            <img src="./museprompt-m5l-doodle-star.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5l-doodle-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5L. Doodle Star</h2>
+        <p class="note">黄色星加米白描边，手绘味更明显，深色底上更跳。</p>
+      </section>
+    </main>
+    <h2 class="section-title">M5 反色版本</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5e-refined-m.svg" width="64" height="64" alt="M5E refined" />
+          <div class="sizes">
+            <img src="./museprompt-m5e-refined-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5e-refined-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5E Refined. Clear M</h2>
+        <p class="note">保留反色和流线气质，但强化中间下折，让它更明确读成 M。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5e-invert-clean.svg" width="64" height="64" alt="M5E" />
+          <div class="sizes">
+            <img src="./museprompt-m5e-invert-clean.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5e-invert-clean.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5E. Invert Clean</h2>
+        <p class="note">纯反色版本，深色底 + 米白 M，favicon 识别最直接。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5f-invert-outline.svg" width="64" height="64" alt="M5F" />
+          <div class="sizes">
+            <img src="./museprompt-m5f-invert-outline.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5f-invert-outline.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5F. Invert Outline</h2>
+        <p class="note">星星只保留描边，整体更克制，品牌感更稳。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5g-invert-blue.svg" width="64" height="64" alt="M5G" />
+          <div class="sizes">
+            <img src="./museprompt-m5g-invert-blue.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5g-invert-blue.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5G. Invert Blue</h2>
+        <p class="note">加入蓝色 M，更偏 AI 工具感，和暖色星星形成对比。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5h-invert-cream-badge.svg" width="64" height="64" alt="M5H" />
+          <div class="sizes">
+            <img src="./museprompt-m5h-invert-cream-badge.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5h-invert-cream-badge.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5H. Cream Badge</h2>
+        <p class="note">外层保留暖纸色边界，兼顾网页气质和深色图标识别。</p>
+      </section>
+    </main>
+    <h2 class="section-title">M5 延展：左上角 AI 星星</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5a-star-corner.svg" width="64" height="64" alt="M5A" />
+          <div class="sizes">
+            <img src="./museprompt-m5a-star-corner.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5a-star-corner.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5A. Star Corner</h2>
+        <p class="note">标准四角星，AI 感明确，和 M 主体保持距离。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5b-tiny-spark.svg" width="64" height="64" alt="M5B" />
+          <div class="sizes">
+            <img src="./museprompt-m5b-tiny-spark.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5b-tiny-spark.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5B. Tiny Spark</h2>
+        <p class="note">星星更轻，附加一个小光点，整体更灵动。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5c-outline-star.svg" width="64" height="64" alt="M5C" />
+          <div class="sizes">
+            <img src="./museprompt-m5c-outline-star.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5c-outline-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5C. Outline Star</h2>
+        <p class="note">星星轮廓更像徽记，品牌感更稳，装饰感少一些。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5d-dark-badge-star.svg" width="64" height="64" alt="M5D" />
+          <div class="sizes">
+            <img src="./museprompt-m5d-dark-badge-star.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5d-dark-badge-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5D. Dark Badge Star</h2>
+        <p class="note">深色外底板版本，网页标签上边界更清楚。</p>
+      </section>
+    </main>
+    <h2 class="section-title">M 字形新方向：软笔刷 / 胖圆 Muse</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m5-swoosh-m.svg" width="64" height="64" alt="M5" />
+          <div class="sizes">
+            <img src="./museprompt-m5-swoosh-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m5-swoosh-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M5. Swoosh M</h2>
+        <p class="note">接近参考图 1 的一笔流线 M，品牌感更强，气质更轻。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m6-soft-blue-m.svg" width="64" height="64" alt="M6" />
+          <div class="sizes">
+            <img src="./museprompt-m6-soft-blue-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m6-soft-blue-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M6. Soft Blue M</h2>
+        <p class="note">接近参考图 2 的胖圆 M，亲和、柔软，和工具的灵感感更强。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m7-ink-m.svg" width="64" height="64" alt="M7" />
+          <div class="sizes">
+            <img src="./museprompt-m7-ink-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m7-ink-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M7. Ink M</h2>
+        <p class="note">更像黑色签名笔触，适合做极简品牌符号，但 16px 会更抽象。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m8-favicon-soft-m.svg" width="64" height="64" alt="M8" />
+          <div class="sizes">
+            <img src="./museprompt-m8-favicon-soft-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m8-favicon-soft-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M8. Favicon Soft M</h2>
+        <p class="note">胖圆 M 加深色底板，专门照顾网页标签小图标识别。</p>
+      </section>
+    </main>
+    <h2 class="section-title">M3 延展：更手写的 Archive M</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m3a-script-m.svg" width="64" height="64" alt="M3A" />
+          <div class="sizes">
+            <img src="./museprompt-m3a-script-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m3a-script-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M3A. Script M</h2>
+        <p class="note">更像一笔写出的 M，气质最柔和，保留档案卡片和星标结构。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m3b-brush-m.svg" width="64" height="64" alt="M3B" />
+          <div class="sizes">
+            <img src="./museprompt-m3b-brush-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m3b-brush-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M3B. Brush M</h2>
+        <p class="note">笔刷感更强，但主轮廓仍然稳定，兼顾手写和小尺寸识别。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m3c-marker-m.svg" width="64" height="64" alt="M3C" />
+          <div class="sizes">
+            <img src="./museprompt-m3c-marker-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m3c-marker-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M3C. Marker M</h2>
+        <p class="note">马克笔手写感，底部收笔线让它更像手绘标记。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m3d-loose-m.svg" width="64" height="64" alt="M3D" />
+          <div class="sizes">
+            <img src="./museprompt-m3d-loose-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m3d-loose-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M3D. Loose M</h2>
+        <p class="note">最自由的手写版本，更有灵感草稿感，适合作为偏个性的品牌符号。</p>
+      </section>
+    </main>
+    <h2 class="section-title">MusePrompt 新方向：Muse 品牌符号</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m1-muse-mark.svg" width="64" height="64" alt="M1" />
+          <div class="sizes">
+            <img src="./museprompt-m1-muse-mark.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m1-muse-mark.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M1. Muse Mark</h2>
+        <p class="note">用 M 做主识别，星标代表灵感与 AI 提炼，最适合作为品牌基础图形。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m2-prompt-cursor.svg" width="64" height="64" alt="M2" />
+          <div class="sizes">
+            <img src="./museprompt-m2-prompt-cursor.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m2-prompt-cursor.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M2. Prompt Cursor</h2>
+        <p class="note">命令符 + 光标，强调 Prompt 工具属性，小尺寸识别非常稳。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m3-archive-m.svg" width="64" height="64" alt="M3" />
+          <div class="sizes">
+            <img src="./museprompt-m3-archive-m.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m3-archive-m.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M3. Archive M</h2>
+        <p class="note">档案卡片 + M，贴近素材管理、灵感归档和案例沉淀。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./museprompt-m4-floating-muse.svg" width="64" height="64" alt="M4" />
+          <div class="sizes">
+            <img src="./museprompt-m4-floating-muse.svg" width="32" height="32" alt="" />
+            <img src="./museprompt-m4-floating-muse.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>M4. Floating Muse</h2>
+        <p class="note">M + 悬浮灵感泡，气质更轻、更像网页里浮动的 AI 助手。</p>
+      </section>
+    </main>
+    <h2 class="section-title">方案 B 延展：手帐风 / 手写 P</h2>
+    <main class="grid">
+      <section class="card selected">
+        <div class="row">
+          <img src="./promptmuse-b1-handwritten-p.svg" width="64" height="64" alt="B1" />
+          <div class="sizes">
+            <img src="./promptmuse-b1-handwritten-p.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-b1-handwritten-p.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>B1. Handwritten P</h2>
+        <p class="note">最直接的手写 P，线条粗、轮廓少，适合做网页标签图标。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./promptmuse-b2-sticky-p.svg" width="64" height="64" alt="B2" />
+          <div class="sizes">
+            <img src="./promptmuse-b2-sticky-p.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-b2-sticky-p.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>B2. Sticky P</h2>
+        <p class="note">便签纸 + 手写 P，更有手帐感，但 16px 时细节略多。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./promptmuse-b3-ink-prompt.svg" width="64" height="64" alt="B3" />
+          <div class="sizes">
+            <img src="./promptmuse-b3-ink-prompt.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-b3-ink-prompt.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>B3. Ink Prompt</h2>
+        <p class="note">更像品牌符号的 P，底部黄线暗示 prompt 输入光标/划线。</p>
+      </section>
+      <section class="card selected">
+        <div class="row">
+          <img src="./promptmuse-b4-stamp-p.svg" width="64" height="64" alt="B4" />
+          <div class="sizes">
+            <img src="./promptmuse-b4-stamp-p.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-b4-stamp-p.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>B4. Stamp P</h2>
+        <p class="note">印章/贴纸式 P，和手帐界面气质最统一，品牌边界更清楚。</p>
+      </section>
+    </main>
+    <h2 class="section-title">上一轮方案</h2>
+    <main class="grid">
+      <section class="card">
+        <div class="row">
+          <img src="./promptmuse-a-spark-card.svg" width="64" height="64" alt="A" />
+          <div class="sizes">
+            <img src="./promptmuse-a-spark-card.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-a-spark-card.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>A. Spark Card</h2>
+        <p class="note">卡片 + 灵感星光，最贴近“图片归档、AI 提炼”的产品心智。</p>
+      </section>
+      <section class="card">
+        <div class="row">
+          <img src="./promptmuse-b-pm-monogram.svg" width="64" height="64" alt="B" />
+          <div class="sizes">
+            <img src="./promptmuse-b-pm-monogram.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-b-pm-monogram.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>B. PM Monogram</h2>
+        <p class="note">品牌字母缩写方案，识别更品牌化，适合后续做完整视觉系统。</p>
+      </section>
+      <section class="card">
+        <div class="row">
+          <img src="./promptmuse-c-muse-pin.svg" width="64" height="64" alt="C" />
+          <div class="sizes">
+            <img src="./promptmuse-c-muse-pin.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-c-muse-pin.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>C. Muse Pin</h2>
+        <p class="note">对话气泡 + 图钉感，强调 Prompt 生成和灵感记录。</p>
+      </section>
+      <section class="card">
+        <div class="row">
+          <img src="./promptmuse-d-lens-star.svg" width="64" height="64" alt="D" />
+          <div class="sizes">
+            <img src="./promptmuse-d-lens-star.svg" width="32" height="32" alt="" />
+            <img src="./promptmuse-d-lens-star.svg" width="16" height="16" alt="" />
+          </div>
+        </div>
+        <h2>D. Lens Star</h2>
+        <p class="note">放大镜 + 星光，强调“识别风格、提炼关键词”，小尺寸最稳。</p>
+      </section>
+    </main>
+  </body>
+</html>

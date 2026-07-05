@@ -102,7 +102,10 @@ const defaultPromptTemplate = `请你作为一名资深视觉设计师和 AI 视
 7. 信息密度与层级
 8. 最容易翻车的 Anti-AI 规则
 
-最终输出要能直接用于 AI 生图工具。`;
+最终输出要能直接用于 AI 生图工具。
+生图 prompt 请同时提供两部分：
+中文版本：用中文准确描述画面类型、构图、字体、色彩、材质、肌理、元素关系和禁忌。
+English version：保留原来高质量英文生图 prompt 的表达方式，可直接复制到 AI 生图工具。`;
 
 function App() {
   if (new URLSearchParams(window.location.search).get("migrate") === "export") return <MigrationExport />;
@@ -146,6 +149,7 @@ function JournalApp() {
   const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
   const imageRefreshAttemptsRef = React.useRef(new Map<string, number>());
   const analysisRetryIdsRef = React.useRef(new Set<string>());
+  const bilingualPromptUpgradeIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
@@ -153,6 +157,10 @@ function JournalApp() {
   const todayWeekKey = React.useMemo(() => formatKey(startOfWeek(new Date())), []);
 
   const activeUiStyle = React.useMemo(() => uiStyles.find((style) => style.id === uiStyle) || uiStyles[0], [uiStyle]);
+  const previewCard = React.useMemo(
+    () => (activeCard ? images.find((card) => card.id === activeCard.id) || searchResults.find((card) => card.id === activeCard.id) || activeCard : null),
+    [activeCard, images, searchResults]
+  );
   const nextUiStyle = React.useCallback(() => {
     styleScaleRef.current[uiStyle] = canvasScale;
     const index = uiStyles.findIndex((style) => style.id === uiStyle);
@@ -182,6 +190,101 @@ function JournalApp() {
     .filter((card) => needsAnalysisRetry(card) && Boolean(getCardImageSrc(card)))
     .map((card) => card.id)
     .join("|");
+  const bilingualPromptUpgradeSignature = images
+    .filter((card) => needsBilingualPromptUpgrade(card) && Boolean(getCardImageSrc(card)))
+    .map((card) => card.id)
+    .join("|");
+  const localBilingualPatchSignature = images
+    .filter(needsBilingualPromptUpgrade)
+    .map((card) => `${card.id}:${card.reversePrompt}`)
+    .join("|");
+  const searchBilingualPatchSignature = searchResults
+    .filter(needsBilingualPromptUpgrade)
+    .map((card) => `${card.id}:${card.reversePrompt}`)
+    .join("|");
+
+  React.useEffect(() => {
+    if (hasBilingualPromptRequirement(promptTemplate)) return;
+    setPromptTemplate(appendBilingualPromptRequirement(promptTemplate));
+  }, [promptTemplate]);
+
+  React.useEffect(() => {
+    bilingualPromptUpgradeIdsRef.current.clear();
+  }, [bilingualPromptUpgradeSignature]);
+
+  React.useEffect(() => {
+    const cards = images.filter(needsBilingualPromptUpgrade);
+    if (!cards.length) return;
+
+    const patchedCards = new Map(
+      cards.map((card) => [
+        card.id,
+        {
+          ...card,
+          reversePrompt: ensureBilingualReversePrompt(card.title, card.keywords, card.reversePrompt),
+          analysisNote: "已补齐中英文生图 prompt"
+        }
+      ])
+    );
+
+    setImages((current) =>
+      persistLocal(
+        weekKey,
+        current.map((card) => patchedCards.get(card.id) || card)
+      )
+    );
+    setSearchResults((current) => current.map((card) => patchedCards.get(card.id) || card));
+    setActiveCard((current) => (current ? patchedCards.get(current.id) || current : current));
+
+    void (async () => {
+      const headers = { "Content-Type": "application/json", ...(await getAuthHeaders()) };
+      await Promise.all(
+        [...patchedCards.values()]
+          .filter((card) => !card.id.startsWith("temp-"))
+          .map((card) =>
+            fetch(`/api/images/${card.id}/analysis`, {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ keywords: card.keywords, reversePrompt: card.reversePrompt })
+            }).catch(() => undefined)
+          )
+      );
+    })();
+  }, [localBilingualPatchSignature, weekKey]);
+
+  React.useEffect(() => {
+    const cards = searchResults.filter(needsBilingualPromptUpgrade);
+    if (!cards.length) return;
+
+    const patchedCards = new Map(
+      cards.map((card) => [
+        card.id,
+        {
+          ...card,
+          reversePrompt: ensureBilingualReversePrompt(card.title, card.keywords, card.reversePrompt),
+          analysisNote: "已补齐中英文生图 prompt"
+        }
+      ])
+    );
+
+    setSearchResults((current) => current.map((card) => patchedCards.get(card.id) || card));
+    setActiveCard((current) => (current ? patchedCards.get(current.id) || current : current));
+
+    void (async () => {
+      const headers = { "Content-Type": "application/json", ...(await getAuthHeaders()) };
+      await Promise.all(
+        [...patchedCards.values()]
+          .filter((card) => !card.id.startsWith("temp-"))
+          .map((card) =>
+            fetch(`/api/images/${card.id}/analysis`, {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ keywords: card.keywords, reversePrompt: card.reversePrompt })
+            }).catch(() => undefined)
+          )
+      );
+    })();
+  }, [searchBilingualPatchSignature]);
 
   React.useEffect(() => {
     const retryableCards = images.filter(
@@ -245,6 +348,84 @@ function JournalApp() {
       cancelled = true;
     };
   }, [disconnectedAnalysisSignature, promptTemplate, weekKey]);
+
+  React.useEffect(() => {
+    const upgradeableCards = images
+      .filter(
+        (card) =>
+          needsBilingualPromptUpgrade(card) && Boolean(getCardImageSrc(card)) && !bilingualPromptUpgradeIdsRef.current.has(card.id)
+      )
+      .slice(0, 2);
+    if (!upgradeableCards.length) return;
+
+    let cancelled = false;
+    void (async () => {
+      const statusResponse = await fetch("/api/ai/status").catch(() => null);
+      const status = statusResponse?.ok ? await statusResponse.json().catch(() => null) : null;
+      if (!status?.configured || cancelled) return;
+
+      for (const card of upgradeableCards) {
+        if (cancelled) return;
+        bilingualPromptUpgradeIdsRef.current.add(card.id);
+        setPending((current) => ({ ...current, [card.id]: true }));
+        try {
+          const response = await fetch("/api/analyze-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageDataUrl: getCardImageSrc(card),
+              promptTemplate: appendBilingualPromptRequirement(promptTemplate)
+            })
+          });
+          if (!response.ok) throw new Error("中英文 prompt 补全失败");
+          const analysis = (await response.json()) as { keywords: string[]; reversePrompt: string };
+          const upgradedAnalysis = {
+            ...analysis,
+            reversePrompt: ensureBilingualReversePrompt(card.title, analysis.keywords, analysis.reversePrompt)
+          };
+          if (cancelled) return;
+
+          setImages((current) =>
+            persistLocal(
+              weekKey,
+              current.map((item) =>
+                item.id === card.id
+                  ? {
+                      ...item,
+                      keywords: upgradedAnalysis.keywords,
+                      reversePrompt: upgradedAnalysis.reversePrompt,
+                      analysisNote: "已补齐中英文生图 prompt"
+                    }
+                  : item
+              )
+            )
+          );
+
+          if (!card.id.startsWith("temp-")) {
+            void fetch(`/api/images/${card.id}/analysis`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+              body: JSON.stringify(upgradedAnalysis)
+            }).catch(() => undefined);
+          }
+        } catch {
+          bilingualPromptUpgradeIdsRef.current.delete(card.id);
+        } finally {
+          if (!cancelled) {
+            setPending((current) => {
+              const next = { ...current };
+              delete next[card.id];
+              return next;
+            });
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bilingualPromptUpgradeSignature, promptTemplate, weekKey]);
 
   React.useEffect(() => {
     setCardPositions((current) => {
@@ -705,9 +886,9 @@ function JournalApp() {
             imageDataUrl,
             analysisImageDataUrl,
             decoration,
-            promptTemplate,
+            promptTemplate: appendBilingualPromptRequirement(promptTemplate),
             asyncAnalysis: true,
-            fast: true
+            fast: false
           })
         });
         if (!response.ok) {
@@ -1114,7 +1295,7 @@ function JournalApp() {
         )}
       </AnimatePresence>
       <ImagePreviewDialog
-        card={activeCard}
+        card={previewCard}
         onClose={() => setActiveCard(null)}
         onDeleteKeyword={deleteKeyword}
         onCopy={notify}
@@ -1213,7 +1394,7 @@ function DayColumn({
             key={image.clientId || image.id}
             card={image}
             index={index}
-            loading={Boolean(pending[image.id])}
+            loading={Boolean(pending[image.id]) || isAnalyzingCard(image)}
             onDeleteCard={onDeleteCard}
             onDeleteKeyword={onDeleteKeyword}
             onOpenPreview={onOpenPreview}
@@ -1614,7 +1795,7 @@ function PolaroidCard({
               <span className="truncate">{extra ? `${first} +${extra}` : first}</span>
             </button>
           )}
-          {loading && <Sparkles className="h-4 w-4 animate-pulse text-amber-600" />}
+          {loading && <BrandAnalysisMark />}
           {open && (
             <AnalysisPanel
               card={card}
@@ -1634,6 +1815,19 @@ function PolaroidCard({
         </div>
       )}
     </article>
+  );
+}
+
+function BrandAnalysisMark() {
+  return (
+    <span className="inline-flex h-[34px] w-[34px] shrink-0 translate-x-1 items-center justify-center" aria-hidden="true">
+      <img
+        className="h-[22px] w-[30px] animate-pulse object-contain opacity-90"
+        src="/app-logo-mark.png"
+        alt=""
+        draggable={false}
+      />
+    </span>
   );
 }
 
@@ -1680,7 +1874,7 @@ function AnalysisPanel({
         <button className="text-left text-sm leading-7 text-zinc-600 dark:text-zinc-300" data-drag-ignore="true" title="复制 Prompt" onClick={() => copyText(card.reversePrompt, onCopy, "Prompt 已复制")}>
           <span className="mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">
             <Copy className="h-3 w-3" />
-            Reverse Prompt
+            生图 prompt
           </span>
           {card.reversePrompt}
         </button>
@@ -1912,6 +2106,41 @@ function resolveLegacyCard(card: InspirationImage): InspirationImage {
 
 function needsAnalysisRetry(card: InspirationImage) {
   return card.keywords.includes("AI 未连接") || card.analysisNote?.includes("旧的无关兜底结果");
+}
+
+function needsBilingualPromptUpgrade(card: InspirationImage) {
+  const prompt = card.reversePrompt?.trim() || "";
+  if (!prompt) return false;
+  if (isAnalyzingCard(card) || needsAnalysisRetry(card)) return false;
+  if (prompt.includes("AI 正在分析") || prompt.includes("AI 接口未完成") || prompt.includes("没有配置可用")) return false;
+  return !containsCjk(prompt);
+}
+
+function containsCjk(value: string) {
+  return /[\u3400-\u9fff]/.test(value);
+}
+
+function hasBilingualPromptRequirement(template: string) {
+  return template.includes("中文版本") && /English version|英文版本/i.test(template);
+}
+
+function appendBilingualPromptRequirement(template: string) {
+  const base = template.trim() || defaultPromptTemplate;
+  if (hasBilingualPromptRequirement(base)) return base;
+  return `${base}
+
+补充要求：生图 prompt 必须同时提供两部分。
+中文版本：用中文准确描述画面类型、构图、字体、色彩、材质、肌理、元素关系和禁忌。
+English version：保留原来高质量英文生图 prompt 的表达方式，可直接复制到 AI 生图工具。`;
+}
+
+function ensureBilingualReversePrompt(title: string, keywords: string[], reversePrompt: string) {
+  const prompt = reversePrompt.trim();
+  if (!prompt || containsCjk(prompt)) return prompt;
+  const keywordText = keywords.length ? keywords.join("、") : title || "参考图的构图、色彩、材质、肌理和字体气质";
+  return `中文版本：画面以${keywordText}为核心视觉特征，保留参考图的构图关系、色彩明度、材质肌理、字体气质、信息层级和元素比例；避免多余装饰、偏离原图风格的 3D 质感、厚重阴影、无关文字和不必要的复杂元素。
+
+English version: ${prompt}`;
 }
 
 function isLegacyFallback(keywords: string[], reversePrompt: string) {

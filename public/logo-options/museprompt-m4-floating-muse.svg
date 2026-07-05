@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MusePrompt floating muse logo">
+  <rect width="64" height="64" rx="15" fill="#F9E7B8"/>
+  <path d="M19 45V22l11 13 11-13v23" fill="none" stroke="#2C251D" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="45" cy="20" r="7" fill="#FFFFFF" stroke="#2C251D" stroke-width="4"/>
+  <path d="M45 15v10M40 20h10" fill="none" stroke="#F0B861" stroke-width="3.4" stroke-linecap="round"/>
+</svg>

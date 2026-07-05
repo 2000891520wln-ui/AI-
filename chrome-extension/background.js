@@ -3,8 +3,8 @@ const MENU_GENERATE_PROMPT = "ai-journal-generate-prompt";
 const MENU_SAVE = "ai-journal-save";
 
 const DEFAULT_SETTINGS = {
-  apiBaseUrl: "http://localhost:8792",
-  appUrl: "http://localhost:5174",
+  apiBaseUrl: "https://ai-journal-nmo9.onrender.com",
+  appUrl: "https://ai-journal-nmo9.onrender.com",
   promptTemplate: `请你作为一名资深视觉设计师和 AI 视觉风格分析师，基于用户上传的参考图反推出一段可复用的 AI 生图 prompt。
 
 请重点分析：
@@ -17,7 +17,10 @@ const DEFAULT_SETTINGS = {
 7. 信息密度与层级
 8. 最容易翻车的 Anti-AI 规则
 
-最终输出要能直接用于 AI 生图工具。`
+最终输出要能直接用于 AI 生图工具。
+生图 prompt 请同时提供两部分：
+中文版本：用中文准确描述画面类型、构图、字体、色彩、材质、肌理、元素关系和禁忌。
+English version：保留原来高质量英文生图 prompt 的表达方式，可直接复制到 AI 生图工具。`
 };
 
 const tapes = ["#f8d891", "#f0b8a4", "#d7c3ff", "#b8d8bd", "#f5eee2"];
@@ -546,7 +549,7 @@ async function pingJournalTabs(settings) {
 function notify(title, message) {
   chrome.notifications.create({
     type: "basic",
-    iconUrl: "icon.svg",
+    iconUrl: "icon-128.png",
     title,
     message
   });

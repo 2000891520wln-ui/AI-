@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MusePrompt swoosh M with dark badge AI star logo">
+  <rect width="64" height="64" rx="15" fill="#2C251D"/>
+  <rect x="8" y="8" width="48" height="48" rx="13" fill="#FFF7DF"/>
+  <path d="M17 10l1.8 5.2 5.2 1.8-5.2 1.8L17 24l-1.8-5.2L10 17l5.2-1.8L17 10z" fill="#F0B861" stroke="#2C251D" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M12 41c7.2.8 16.4-14 24.5-22.4 2.7-2.8 7.7-1 6.5 3.4l-5.2 19.8c-.5 1.9 1.8 2.9 3.1 1.4l7.2-8.6c2.3-2.8 7-.7 6.2 2.9l-1.8 8" fill="none" stroke="#2C251D" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

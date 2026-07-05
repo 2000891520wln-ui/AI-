@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PromptMuse muse pin logo">
+  <rect width="64" height="64" rx="15" fill="#FFF7DF"/>
+  <path d="M18 22c0-5 4-9 9-9h10c5 0 9 4 9 9v14c0 5-4 9-9 9h-8l-10 8v-8h-2c-5 0-9-4-9-9V22z" fill="#FFFFFF" stroke="#2C251D" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M25 28h14M25 36h8" fill="none" stroke="#2C251D" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="45" cy="19" r="5" fill="#F0B861" stroke="#2C251D" stroke-width="3"/>
+</svg>

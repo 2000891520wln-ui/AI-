@@ -24,8 +24,8 @@
 
 扩展详情页里点击「扩展程序选项」：
 
-- API 地址默认是 `http://localhost:8792`
-- 手帐应用地址默认是 `http://localhost:5174`
+- API 地址默认是 `https://ai-journal-nmo9.onrender.com`
+- 手帐应用地址默认是 `https://ai-journal-nmo9.onrender.com`
 - Prompt 模板可改成你应用里正在使用的模板
 
 ## 注意

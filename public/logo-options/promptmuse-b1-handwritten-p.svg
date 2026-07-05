@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PromptMuse handwritten P logo">
+  <rect width="64" height="64" rx="15" fill="#FFF7DF"/>
+  <path d="M24 48c1-10 2.5-22.5 3.5-31" fill="none" stroke="#2C251D" stroke-width="7" stroke-linecap="round"/>
+  <path d="M29 17c13-2 20 3 19 11-.8 8.3-10.6 10.8-20.5 7.4" fill="none" stroke="#2C251D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 12l2 5.8 5.8 2-5.8 2-2 5.8-2-5.8-5.8-2 5.8-2 2-5.8z" fill="#F0B861" stroke="#2C251D" stroke-width="2.6" stroke-linejoin="round"/>
+</svg>

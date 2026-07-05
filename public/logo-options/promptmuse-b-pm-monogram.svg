@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PromptMuse PM monogram logo">
+  <rect width="64" height="64" rx="15" fill="#2C251D"/>
+  <path d="M17 45V18h14c8 0 13 4.6 13 11.2S39 40 31 40h-6v5h-8z" fill="#FFF7DF"/>
+  <path d="M25 25v8h5.5c3.2 0 5.3-1.4 5.3-4s-2.1-4-5.3-4H25z" fill="#2C251D"/>
+  <path d="M39 45V29l6.5 7.8L52 29v16h-6V39l-3.8 4.3L38.5 39v6H39z" fill="#F0B861"/>
+  <path d="M47 12l1.8 5.2L54 19l-5.2 1.8L47 26l-1.8-5.2L40 19l5.2-1.8L47 12z" fill="#F0B861"/>
+</svg>

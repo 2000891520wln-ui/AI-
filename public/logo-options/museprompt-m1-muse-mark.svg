@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MusePrompt muse mark logo">
+  <rect width="64" height="64" rx="15" fill="#FFF7DF"/>
+  <path d="M16 45V20l12 14 12-14v25" fill="none" stroke="#2C251D" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M46 12l2.3 6.7 6.7 2.3-6.7 2.3L46 30l-2.3-6.7L37 21l6.7-2.3L46 12z" fill="#F0B861" stroke="#2C251D" stroke-width="2.8" stroke-linejoin="round"/>
+</svg>

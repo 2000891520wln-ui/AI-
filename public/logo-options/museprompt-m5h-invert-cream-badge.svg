@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MusePrompt inverted cream badge swoosh M logo">
+  <rect width="64" height="64" rx="15" fill="#FFF7DF"/>
+  <rect x="8" y="8" width="48" height="48" rx="13" fill="#2C251D"/>
+  <path d="M17 11l1.8 5.2 5.2 1.8-5.2 1.8L17 25l-1.8-5.2L10 18l5.2-1.8L17 11z" fill="#F0B861"/>
+  <path d="M12 41c7.2.8 16.4-14 24.5-22.4 2.7-2.8 7.7-1 6.5 3.4l-5.2 19.8c-.5 1.9 1.8 2.9 3.1 1.4l7.2-8.6c2.3-2.8 7-.7 6.2 2.9l-1.8 8" fill="none" stroke="#FFF7DF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MusePrompt script archive M logo">
+  <rect width="64" height="64" rx="15" fill="#FFF7DF"/>
+  <path d="M15 20h34v28H15z" fill="#FFFFFF" stroke="#2C251D" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M20 16h25" fill="none" stroke="#F0B861" stroke-width="7" stroke-linecap="round"/>
+  <path d="M22 40c1.2-6.5 2.5-12.5 4.2-12.5 2 0 2.2 9.5 5 9.5 2.4 0 3.4-8.8 5.7-8.8 2.1 0 2.7 6.5 4.1 11.8" fill="none" stroke="#2C251D" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M46 13l1.6 4.8 4.8 1.6-4.8 1.6-1.6 4.8-1.6-4.8-4.8-1.6 4.8-1.6L46 13z" fill="#F0B861" stroke="#2C251D" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>

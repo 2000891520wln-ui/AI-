@@ -1,7 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#fff7df"/>
-  <path d="M29 33h70v70H29z" fill="#fff" stroke="#2c251d" stroke-width="7" stroke-linejoin="round"/>
-  <path d="M42 26h44" stroke="#f0b861" stroke-width="14" stroke-linecap="round"/>
-  <path d="M45 58h38M45 76h25" stroke="#2c251d" stroke-width="7" stroke-linecap="round"/>
-  <path d="M92 30l10 10M102 30L92 40" stroke="#7c6cff" stroke-width="7" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-label="AI Journal logo">
+  <rect width="384" height="384" fill="#2b2219"/>
+  <path fill="#ffde4a" d="M82 54c8 35 17 43 52 51-35 8-44 17-52 52-8-35-17-44-52-52 35-8 44-16 52-51Z"/>
+  <path
+    fill="none"
+    stroke="#fff6d8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="38"
+    d="M63 269c33 0 52-29 75-68l40-69c18-31 39-43 60-30 19 12 17 44 14 74l-5 54c-2 23 4 35 20 34 19-1 27-26 39-48 13-24 27-34 45-27 18 7 17 26 16 45l-1 25"
+  />
 </svg>

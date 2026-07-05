@@ -163,7 +163,7 @@ async function analyzeWithOpenAI(imageDataUrl: string, promptTemplate?: string, 
     throw new Error(body.error?.message || "GPT 图像分析接口调用失败");
   }
 
-  return normalizeAnalysis(JSON.parse(extractText(body)), "openai");
+  return normalizeAnalysis(JSON.parse(extractText(body)), "openai", promptTemplate);
 }
 
 async function analyzeWithGemini(imageDataUrl: string, promptTemplate?: string, options: AnalysisOptions = {}): Promise<GptAnalysis> {
@@ -220,7 +220,7 @@ async function analyzeWithGemini(imageDataUrl: string, promptTemplate?: string, 
   }
 
   const text = body.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("") || "";
-  return normalizeAnalysis(JSON.parse(text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim()), "gemini");
+  return normalizeAnalysis(JSON.parse(text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim()), "gemini", promptTemplate);
 }
 
 async function analyzeWithVolcengine(imageDataUrl: string, promptTemplate?: string, options: AnalysisOptions = {}): Promise<GptAnalysis> {
@@ -304,22 +304,26 @@ async function analyzeWithChatCompletions({
   }
 
   const text = body.choices?.[0]?.message?.content || body.output_text || "";
-  return normalizeAnalysis(parseJsonText(text), source);
+  return normalizeAnalysis(parseJsonText(text), source, promptTemplate);
 }
 
 function buildAnalysisPrompt(promptTemplate?: string, options: AnalysisOptions = {}) {
   const template = promptTemplate?.trim() || ORIGINAL_PRODUCT_PROMPT;
   if (options.fast) {
-    return `${template.slice(0, 1800)}
+    return `${template}
 
 快速分析这张参考图，输出可直接用于设计灵感板的结果。
+上方用户 prompt 模板是最高优先级：如果模板新增了图片比例、画面尺寸、构图比例、留白比例、主体占比、字体比例、图文比例等分析维度，必须在 reversePrompt 中明确回应，不能省略。
 只返回严格 JSON，不要 Markdown，不要解释：
-{
-  "keywords": ["5-10 个具体中文设计术语"],
-  "reversePrompt": "一段英文 AI 生图 prompt，概括画面类型、构图、字体、色彩、材质、印刷/颗粒、元素关系与禁忌"
-}
-
-要求：关键词必须具体，避免“高级、简约、复古、可爱”等泛词；reversePrompt 控制在 90-150 个英文词。`;
+	{
+	  "keywords": ["5-10 个具体中文设计术语"],
+	  "reversePrompt": "严格按上方用户 prompt 模板组织的一段视觉分析与生图 prompt；如果模板要求结构化，就保留结构化；如果模板要求中英文，就同时输出中文和英文版本"
+	}
+	
+要求：
+1. keywords 必须具体，避免“高级、简约、复古、可爱”等泛词。
+2. reversePrompt 的语言、结构、分析维度和长度必须优先遵守上方用户 prompt 模板，不要强制改成纯英文。
+3. 不要把用户模板简化成普通英文生图 prompt；模板里要求分析的项目必须逐项覆盖。`;
   }
 
   return `${template}
@@ -327,31 +331,50 @@ function buildAnalysisPrompt(promptTemplate?: string, options: AnalysisOptions =
 你现在运行在这个应用的上传分析流程中。
 请基于用户上传的参考图，以及上方 prompt 模板，反推出该图片可复用的视觉生成 prompt，并生成该图片对应的设计术语关键词。
 ${options.fast ? "当前是快速生成模式：请优先提取最关键的视觉风格，不要过度展开细枝末节。" : ""}
+上方用户 prompt 模板是最高优先级。模板里新增的每个分析维度都必须被执行并体现在 reversePrompt 中，包括但不限于图片比例、画面尺寸、构图比例、留白比例、主体占比、字体比例、图文比例、材质、色彩、字体、元素关系和禁忌。
 不要输出应用开发方案，不要描述技术栈，不要复述需求文档。
 
 请只返回严格 JSON，不要 Markdown，不要解释。JSON 结构必须完全如下：
-{
-  "keywords": ["5-10 个中文或中英混合设计术语，适合直接显示为图片右侧标签"],
-  "reversePrompt": "基于参考图和用户 prompt 模板反推得到的一段英文视觉风格 prompt，方便用户复制到 AI 生图工具"
-}
+	{
+	  "keywords": ["5-10 个中文或中英混合设计术语，适合直接显示为图片右侧标签"],
+	  "reversePrompt": "严格按用户 prompt 模板反推得到的视觉分析与生图 prompt，语言和结构必须遵守用户 prompt 模板；如果模板要求结构化，就保留结构化；如果模板要求中英文，就同时包含中文和英文版本"
+	}
 
 输出规则：
 1. keywords 必须有 5-10 个，不能少于 5 个。
 2. keywords 必须针对这张图片变化，禁止每张图都输出同一组词。
 3. keywords 不能只写“高级、简约、复古、可爱”，必须是具体设计术语，例如字体、构图、材质、色彩、插画、排版、信息密度、视觉风格相关术语。
-4. reversePrompt 不能为空，必须把图片风格总结成可复制复用的英文视觉 prompt。
-5. 如果图片信息较少，也要基于可见风格关系推断术语。`;
+4. reversePrompt 不能为空；不要强制英文，必须优先遵守用户 prompt 模板中的语言、结构和分析维度要求。
+5. 如果用户模板要求结构化分析，reversePrompt 必须按模板的结构输出，不要压缩成单段普通 prompt。
+6. 如果图片信息较少，也要基于可见风格关系推断术语。`;
 }
 
-function normalizeAnalysis(parsed: unknown, source: GptAnalysis["source"]): GptAnalysis {
+function normalizeAnalysis(parsed: unknown, source: GptAnalysis["source"], promptTemplate?: string): GptAnalysis {
   const value = parsed as Partial<GptAnalysis>;
   const keywords = normalizeKeywords(value?.keywords);
-  const reversePrompt = String(value?.reversePrompt || "").trim();
+  const reversePrompt = ensureBilingualReversePrompt(String(value?.reversePrompt || "").trim(), keywords, promptTemplate);
   return {
     keywords,
     reversePrompt: reversePrompt || "",
     source
   };
+}
+
+function ensureBilingualReversePrompt(reversePrompt: string, keywords: string[], promptTemplate?: string) {
+  if (!requiresBilingualPrompt(promptTemplate) || containsCjk(reversePrompt)) return reversePrompt;
+  const keywordText = keywords.length ? keywords.join("、") : "参考图的构图、色彩、材质、肌理和字体气质";
+  return `中文版本：画面以${keywordText}为核心视觉特征，保留参考图的构图关系、色彩明度、材质肌理、字体气质、信息层级和元素比例；避免多余装饰、偏离原图风格的 3D 质感、厚重阴影、无关文字和不必要的复杂元素。
+
+English version: ${reversePrompt}`;
+}
+
+function requiresBilingualPrompt(promptTemplate?: string) {
+  const template = promptTemplate || "";
+  return template.includes("中文版本") && /English version|英文版本/i.test(template);
+}
+
+function containsCjk(value: string) {
+  return /[\u3400-\u9fff]/.test(value);
 }
 
 function extractText(response: any) {

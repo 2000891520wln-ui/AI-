@@ -142,6 +142,8 @@ function JournalApp() {
   const canvasPanRef = React.useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const centeredWeekRef = React.useRef<string | null>(null);
   const zoomAnchorRef = React.useRef<{ pointerX: number; pointerY: number; worldX: number; worldY: number } | null>(null);
+  const flatViewportRef = React.useRef<{ worldX: number; worldY: number; scale: number } | null>(null);
+  const pendingFlatViewportRestoreRef = React.useRef<{ worldX: number; worldY: number } | null>(null);
   const pendingCreateIdsRef = React.useRef(new Set<string>());
   const deletedCardIdsRef = React.useRef(readDeletedCards());
   const recentPasteSignatureRef = React.useRef<{ signature: string; at: number } | null>(null);
@@ -176,10 +178,27 @@ function JournalApp() {
     styleScaleRef.current[uiStyle] = canvasScale;
     const index = uiStyles.findIndex((style) => style.id === uiStyle);
     const nextStyle = uiStyles[(index + 1) % uiStyles.length].id;
-    if (nextStyle === "journal") centeredWeekRef.current = null;
-    setCanvasScale(nextStyle === "journal" ? defaultStyleScales.journal : styleScaleRef.current[nextStyle]);
+    const viewport = viewportRef.current;
+
+    if (uiStyle !== "gallery" && viewport) {
+      flatViewportRef.current = {
+        worldX: (viewport.scrollLeft + viewport.clientWidth / 2) / canvasScale,
+        worldY: (viewport.scrollTop + viewport.clientHeight / 2) / canvasScale,
+        scale: canvasScale
+      };
+    }
+
+    const flatViewport = flatViewportRef.current;
+    if (nextStyle !== "gallery" && flatViewport) {
+      pendingFlatViewportRestoreRef.current = flatViewport;
+      centeredWeekRef.current = `${weekKey}:${nextStyle}`;
+      styleScaleRef.current[nextStyle] = flatViewport.scale;
+      setCanvasScale(flatViewport.scale);
+    } else {
+      setCanvasScale(styleScaleRef.current[nextStyle]);
+    }
     setUiStyle(nextStyle);
-  }, [canvasScale, uiStyle]);
+  }, [canvasScale, uiStyle, weekKey]);
 
   React.useEffect(() => {
     styleScaleRef.current = { ...defaultStyleScales };
@@ -511,6 +530,16 @@ function JournalApp() {
     viewport.scrollTop = anchor.worldY * canvasScale - anchor.pointerY;
     zoomAnchorRef.current = null;
   }, [canvasScale]);
+
+  React.useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const anchor = pendingFlatViewportRestoreRef.current;
+    if (!viewport || !anchor || uiStyle === "gallery") return;
+
+    viewport.scrollLeft = Math.max(0, anchor.worldX * canvasScale - viewport.clientWidth / 2);
+    viewport.scrollTop = Math.max(0, anchor.worldY * canvasScale - viewport.clientHeight / 2);
+    pendingFlatViewportRestoreRef.current = null;
+  }, [canvasScale, uiStyle]);
 
   React.useEffect(() => {
     const viewport = viewportRef.current;

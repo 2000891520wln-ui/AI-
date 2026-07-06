@@ -63,6 +63,16 @@ app.get("/api/images", async (req, res, next) => {
   }
 });
 
+app.get("/api/images/all", async (req, res, next) => {
+  try {
+    const limit = Math.min(800, Math.max(1, Number(req.query.limit || 500)));
+    const userId = await getUserIdFromAuthHeader(req.headers.authorization);
+    res.json(await withSignedImageUrls(await store.listAll(userId, limit)));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/search", async (req, res, next) => {
   try {
     const query = String(req.query.q || "");
@@ -165,8 +175,9 @@ app.post("/api/images", async (req, res, next) => {
         .then((analysis) => store.updateAnalysis(row.id, userId, { keywords: analysis.keywords, reversePrompt: analysis.reversePrompt }))
         .catch((error) => {
           const message = error instanceof Error ? error.message : "AI 接口调用失败";
+          const label = classifyAiFailureLabel(message);
           return store.updateAnalysis(row.id, userId, {
-            keywords: ["AI 未连接"],
+            keywords: [label],
             reversePrompt: `AI 接口未完成：${message}`
           });
         });
@@ -251,7 +262,7 @@ if (existsSync(distPath)) {
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error ? error.message : "服务暂时不可用";
-  res.status(400).json({ error: message });
+  res.status(400).json({ error: message, label: classifyAiFailureLabel(message) });
 });
 
 app.listen(port, host, () => {
@@ -285,6 +296,26 @@ function isLocalRequest(req: express.Request) {
     host.startsWith("localhost:") ||
     host.startsWith("127.0.0.1:")
   );
+}
+
+function classifyAiFailureLabel(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("overdue balance") ||
+    normalized.includes("insufficient balance") ||
+    normalized.includes("insufficient funds") ||
+    normalized.includes("account balance") ||
+    normalized.includes("billing") ||
+    normalized.includes("quota exceeded") ||
+    normalized.includes("exceeded your current quota") ||
+    normalized.includes("余额不足") ||
+    normalized.includes("账户欠费") ||
+    normalized.includes("账号欠费") ||
+    normalized.includes("额度不足")
+  ) {
+    return "余额不足";
+  }
+  return "AI 未连接";
 }
 
 async function withSignedImageUrls(rows: InspirationImage[]) {

@@ -116,6 +116,7 @@ function JournalApp() {
   const defaultTemplate = React.useMemo(() => readDefaultPromptTemplate(), []);
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [images, setImages] = React.useState<InspirationImage[]>([]);
+  const [galleryImages, setGalleryImages] = React.useState<InspirationImage[]>([]);
   const [activeCard, setActiveCard] = React.useState<InspirationImage | null>(null);
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
   const [uiStyle, setUiStyle] = React.useState<UiStyle>(() => readUiStyle());
@@ -149,17 +150,27 @@ function JournalApp() {
   const recentImageFingerprintsRef = React.useRef(new Map<string, number>());
   const imageRefreshAttemptsRef = React.useRef(new Map<string, number>());
   const analysisRetryIdsRef = React.useRef(new Set<string>());
+  const analysisRetryAttemptsRef = React.useRef(new Map<string, number>());
+  const analysisRetryTimerRef = React.useRef<number | null>(null);
   const bilingualPromptUpgradeIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
+  const [analysisRetryTick, setAnalysisRetryTick] = React.useState(0);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
   const weekDates = React.useMemo(() => days.map((_, index) => addDays(weekStart, index)), [weekStart]);
   const todayWeekKey = React.useMemo(() => formatKey(startOfWeek(new Date())), []);
 
   const activeUiStyle = React.useMemo(() => uiStyles.find((style) => style.id === uiStyle) || uiStyles[0], [uiStyle]);
+  const boardImages = uiStyle === "gallery" ? galleryImages : images;
   const previewCard = React.useMemo(
-    () => (activeCard ? images.find((card) => card.id === activeCard.id) || searchResults.find((card) => card.id === activeCard.id) || activeCard : null),
-    [activeCard, images, searchResults]
+    () =>
+      activeCard
+        ? images.find((card) => card.id === activeCard.id) ||
+          galleryImages.find((card) => card.id === activeCard.id) ||
+          searchResults.find((card) => card.id === activeCard.id) ||
+          activeCard
+        : null,
+    [activeCard, galleryImages, images, searchResults]
   );
   const nextUiStyle = React.useCallback(() => {
     styleScaleRef.current[uiStyle] = canvasScale;
@@ -186,6 +197,15 @@ function JournalApp() {
     imagesRef.current = images;
   }, [images]);
 
+  React.useEffect(
+    () => () => {
+      if (analysisRetryTimerRef.current !== null) {
+        window.clearTimeout(analysisRetryTimerRef.current);
+      }
+    },
+    []
+  );
+
   const disconnectedAnalysisSignature = images
     .filter((card) => needsAnalysisRetry(card) && Boolean(getCardImageSrc(card)))
     .map((card) => card.id)
@@ -194,14 +214,14 @@ function JournalApp() {
     .filter((card) => needsBilingualPromptUpgrade(card) && Boolean(getCardImageSrc(card)))
     .map((card) => card.id)
     .join("|");
-  const localBilingualPatchSignature = images
-    .filter(needsBilingualPromptUpgrade)
-    .map((card) => `${card.id}:${card.reversePrompt}`)
-    .join("|");
-  const searchBilingualPatchSignature = searchResults
-    .filter(needsBilingualPromptUpgrade)
-    .map((card) => `${card.id}:${card.reversePrompt}`)
-    .join("|");
+
+  function scheduleAnalysisRetry(delay = 5000) {
+    if (analysisRetryTimerRef.current !== null) return;
+    analysisRetryTimerRef.current = window.setTimeout(() => {
+      analysisRetryTimerRef.current = null;
+      setAnalysisRetryTick((tick) => tick + 1);
+    }, delay);
+  }
 
   React.useEffect(() => {
     if (hasBilingualPromptRequirement(promptTemplate)) return;
@@ -213,104 +233,79 @@ function JournalApp() {
   }, [bilingualPromptUpgradeSignature]);
 
   React.useEffect(() => {
-    const cards = images.filter(needsBilingualPromptUpgrade);
-    if (!cards.length) return;
-
-    const patchedCards = new Map(
-      cards.map((card) => [
-        card.id,
-        {
-          ...card,
-          reversePrompt: ensureBilingualReversePrompt(card.title, card.keywords, card.reversePrompt),
-          analysisNote: "已补齐中英文生图 prompt"
-        }
-      ])
-    );
-
-    setImages((current) =>
-      persistLocal(
-        weekKey,
-        current.map((card) => patchedCards.get(card.id) || card)
-      )
-    );
-    setSearchResults((current) => current.map((card) => patchedCards.get(card.id) || card));
-    setActiveCard((current) => (current ? patchedCards.get(current.id) || current : current));
-
-    void (async () => {
-      const headers = { "Content-Type": "application/json", ...(await getAuthHeaders()) };
-      await Promise.all(
-        [...patchedCards.values()]
-          .filter((card) => !card.id.startsWith("temp-"))
-          .map((card) =>
-            fetch(`/api/images/${card.id}/analysis`, {
-              method: "PATCH",
-              headers,
-              body: JSON.stringify({ keywords: card.keywords, reversePrompt: card.reversePrompt })
-            }).catch(() => undefined)
-          )
-      );
-    })();
-  }, [localBilingualPatchSignature, weekKey]);
-
-  React.useEffect(() => {
-    const cards = searchResults.filter(needsBilingualPromptUpgrade);
-    if (!cards.length) return;
-
-    const patchedCards = new Map(
-      cards.map((card) => [
-        card.id,
-        {
-          ...card,
-          reversePrompt: ensureBilingualReversePrompt(card.title, card.keywords, card.reversePrompt),
-          analysisNote: "已补齐中英文生图 prompt"
-        }
-      ])
-    );
-
-    setSearchResults((current) => current.map((card) => patchedCards.get(card.id) || card));
-    setActiveCard((current) => (current ? patchedCards.get(current.id) || current : current));
-
-    void (async () => {
-      const headers = { "Content-Type": "application/json", ...(await getAuthHeaders()) };
-      await Promise.all(
-        [...patchedCards.values()]
-          .filter((card) => !card.id.startsWith("temp-"))
-          .map((card) =>
-            fetch(`/api/images/${card.id}/analysis`, {
-              method: "PATCH",
-              headers,
-              body: JSON.stringify({ keywords: card.keywords, reversePrompt: card.reversePrompt })
-            }).catch(() => undefined)
-          )
-      );
-    })();
-  }, [searchBilingualPatchSignature]);
-
-  React.useEffect(() => {
     const retryableCards = images.filter(
       (card) => needsAnalysisRetry(card) && Boolean(getCardImageSrc(card)) && !analysisRetryIdsRef.current.has(card.id)
-    );
+    ).slice(0, 2);
     if (!retryableCards.length) return;
 
-    let cancelled = false;
     void (async () => {
       const statusResponse = await fetch("/api/ai/status").catch(() => null);
       const status = statusResponse?.ok ? await statusResponse.json().catch(() => null) : null;
-      if (!status?.configured || cancelled) return;
+      if (!status?.configured) {
+        scheduleAnalysisRetry();
+        return;
+      }
 
       for (const card of retryableCards) {
-        if (cancelled) return;
+        const imageSource = getCardImageSrc(card);
+        if (!imageSource) continue;
         analysisRetryIdsRef.current.add(card.id);
         setPending((current) => ({ ...current, [card.id]: true }));
+        setImages((current) =>
+          persistLocal(
+            weekKey,
+            current.map((item) =>
+              item.id === card.id
+                ? {
+                    ...item,
+                    keywords: ["分析中"],
+                    reversePrompt: item.reversePrompt?.includes("AI 接口未完成")
+                      ? "AI 正在重新连接并分析视觉风格..."
+                      : item.reversePrompt,
+                    analysisNote: "正在重新连接 AI 并重新分析"
+                  }
+                : item
+            )
+          )
+        );
+        setSearchResults((current) =>
+          current.map((item) =>
+            item.id === card.id
+              ? {
+                  ...item,
+                  keywords: ["分析中"],
+                  reversePrompt: item.reversePrompt?.includes("AI 接口未完成")
+                    ? "AI 正在重新连接并分析视觉风格..."
+                    : item.reversePrompt,
+                  analysisNote: "正在重新连接 AI 并重新分析"
+                }
+              : item
+          )
+        );
+        setActiveCard((current) =>
+          current?.id === card.id
+            ? {
+                ...current,
+                keywords: ["分析中"],
+                reversePrompt: current.reversePrompt?.includes("AI 接口未完成")
+                  ? "AI 正在重新连接并分析视觉风格..."
+                  : current.reversePrompt,
+                analysisNote: "正在重新连接 AI 并重新分析"
+              }
+            : current
+        );
         try {
           const response = await fetch("/api/analyze-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ imageDataUrl: getCardImageSrc(card), promptTemplate })
+            body: JSON.stringify({ imageDataUrl: imageSource, promptTemplate })
           });
-          if (!response.ok) throw new Error("AI 重新分析失败");
+          if (!response.ok) {
+            const errorBody = await response.json().catch(() => null);
+            throw new Error(errorBody?.error || "AI 重新分析失败");
+          }
           const analysis = (await response.json()) as { keywords: string[]; reversePrompt: string };
-          if (cancelled) return;
+          analysisRetryAttemptsRef.current.delete(card.id);
 
           setImages((current) =>
             persistLocal(
@@ -322,6 +317,18 @@ function JournalApp() {
               )
             )
           );
+          setSearchResults((current) =>
+            current.map((item) =>
+              item.id === card.id
+                ? { ...item, keywords: analysis.keywords, reversePrompt: analysis.reversePrompt, analysisNote: "AI 已重新连接并完成分析" }
+                : item
+            )
+          );
+          setActiveCard((current) =>
+            current?.id === card.id
+              ? { ...current, keywords: analysis.keywords, reversePrompt: analysis.reversePrompt, analysisNote: "AI 已重新连接并完成分析" }
+              : current
+          );
 
           if (!card.id.startsWith("temp-")) {
             void fetch(`/api/images/${card.id}/analysis`, {
@@ -330,24 +337,60 @@ function JournalApp() {
               body: JSON.stringify(analysis)
             }).catch(() => undefined);
           }
-        } catch {
+        } catch (error) {
+          const attempts = (analysisRetryAttemptsRef.current.get(card.id) || 0) + 1;
+          const message = error instanceof Error ? error.message : "AI 接口调用失败";
+          const label = classifyAiFailureLabel(message);
+          analysisRetryAttemptsRef.current.set(card.id, attempts);
+          setImages((current) =>
+            persistLocal(
+              weekKey,
+              current.map((item) =>
+                item.id === card.id
+                  ? {
+                      ...item,
+                      keywords: [label],
+                      reversePrompt: `AI 接口未完成：${message}`,
+                      analysisNote: `AI 自动重试失败（第 ${attempts} 次）：${message}`
+                    }
+                  : item
+              )
+            )
+          );
+          setSearchResults((current) =>
+            current.map((item) =>
+              item.id === card.id
+                ? {
+                    ...item,
+                    keywords: [label],
+                    reversePrompt: `AI 接口未完成：${message}`,
+                    analysisNote: `AI 自动重试失败（第 ${attempts} 次）：${message}`
+                  }
+                : item
+            )
+          );
+          setActiveCard((current) =>
+            current?.id === card.id
+              ? {
+                  ...current,
+                  keywords: [label],
+                  reversePrompt: `AI 接口未完成：${message}`,
+                  analysisNote: `AI 自动重试失败（第 ${attempts} 次）：${message}`
+                }
+              : current
+          );
           analysisRetryIdsRef.current.delete(card.id);
+          if (label !== "余额不足") scheduleAnalysisRetry(Math.min(30000, 2000 * attempts));
         } finally {
-          if (!cancelled) {
-            setPending((current) => {
-              const next = { ...current };
-              delete next[card.id];
-              return next;
-            });
-          }
+          setPending((current) => {
+            const next = { ...current };
+            delete next[card.id];
+            return next;
+          });
         }
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [disconnectedAnalysisSignature, promptTemplate, weekKey]);
+  }, [analysisRetryTick, disconnectedAnalysisSignature, promptTemplate, weekKey]);
 
   React.useEffect(() => {
     const upgradeableCards = images
@@ -379,10 +422,7 @@ function JournalApp() {
           });
           if (!response.ok) throw new Error("中英文 prompt 补全失败");
           const analysis = (await response.json()) as { keywords: string[]; reversePrompt: string };
-          const upgradedAnalysis = {
-            ...analysis,
-            reversePrompt: ensureBilingualReversePrompt(card.title, analysis.keywords, analysis.reversePrompt)
-          };
+          const upgradedAnalysis = analysis;
           if (cancelled) return;
 
           setImages((current) =>
@@ -443,10 +483,16 @@ function JournalApp() {
   }, [weekKey]);
 
   React.useEffect(() => {
+    if (uiStyle !== "gallery") return;
+    void loadAllImages().then(setGalleryImages);
+  }, [uiStyle]);
+
+  React.useEffect(() => {
     const syncWeek = () => {
       if (document.hidden) return;
       if (pendingCreateIdsRef.current.size > 0) return;
       void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey));
+      if (uiStyle === "gallery") void loadAllImages().then(setGalleryImages);
     };
     const timer = window.setInterval(syncWeek, 2500);
     window.addEventListener("ai-journal-sync", syncWeek);
@@ -454,7 +500,7 @@ function JournalApp() {
       window.clearInterval(timer);
       window.removeEventListener("ai-journal-sync", syncWeek);
     };
-  }, [weekKey]);
+  }, [uiStyle, weekKey]);
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -468,24 +514,23 @@ function JournalApp() {
 
   React.useEffect(() => {
     const viewport = viewportRef.current;
-    const todayIndex = findTodayIndex(weekDates);
+    const weekRows = rowsForWeek(weekKey, images);
+    const targetDayIndex = autoCenterDayIndex(weekDates, weekRows);
     const centerKey = `${weekKey}:${uiStyle}`;
-    if (!viewport || uiStyle === "gallery" || todayIndex < 0 || centeredWeekRef.current === centerKey) return;
+    if (!viewport || uiStyle === "gallery" || targetDayIndex < 0 || centeredWeekRef.current === centerKey) return;
 
     centeredWeekRef.current = centerKey;
     requestAnimationFrame(() => {
-      const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
-      viewport.scrollLeft = Math.max(0, targetLeft);
-      viewport.scrollTop = 0;
+      centerDayContent(targetDayIndex);
     });
-  }, [canvasScale, uiStyle, weekDates, weekKey]);
+  }, [canvasScale, images, uiStyle, weekDates, weekKey]);
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || uiStyle !== "gallery") return;
 
     centerGalleryContent();
-  }, [canvasScale, images.length, uiStyle, weekKey]);
+  }, [canvasScale, galleryImages.length, uiStyle, weekKey]);
 
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
@@ -598,7 +643,7 @@ function JournalApp() {
     const onWheel = (event: WheelEvent) => {
       if (uiStyle === "gallery") {
         event.preventDefault();
-        setGalleryDepth((current) => clamp(current - event.deltaY * 1.1, 0, images.length * 240 + 720));
+        setGalleryDepth((current) => clamp(current - event.deltaY * 1.1, 0, boardImages.length * 240 + 720));
         return;
       }
       if (!event.ctrlKey && !event.metaKey) return;
@@ -608,7 +653,7 @@ function JournalApp() {
 
     viewport.addEventListener("wheel", onWheel, { passive: false });
     return () => viewport.removeEventListener("wheel", onWheel);
-  }, [images.length, uiStyle]);
+  }, [boardImages.length, uiStyle]);
 
   function zoomCanvasAt(scaleFactor: number, clientX: number, clientY: number) {
     const viewport = viewportRef.current;
@@ -741,10 +786,28 @@ function JournalApp() {
         headers: await getAuthHeaders()
       });
       if (!response.ok) throw new Error("api unavailable");
-      const serverRows = ((await response.json()) as InspirationImage[]).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
+      const serverRows = rowsForWeek(
+        key,
+        ((await response.json()) as InspirationImage[]).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard)
+      );
       const rows = mergeCards(localRows, serverRows);
       if (rows.length) saveLocal(key, rows);
       return rows;
+    } catch {
+      return localRows;
+    }
+  }
+
+  async function loadAllImages() {
+    const deletedIds = currentDeletedCards(deletedCardIdsRef);
+    const localRows = await refreshSignedImageUrls(readAllLocal().filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard));
+    try {
+      const response = await fetch("/api/images/all?limit=800", {
+        headers: await getAuthHeaders()
+      });
+      if (!response.ok) throw new Error("api unavailable");
+      const serverRows = ((await response.json()) as InspirationImage[]).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
+      return mergeCards(localRows, serverRows);
     } catch {
       return localRows;
     }
@@ -810,6 +873,7 @@ function JournalApp() {
 
       pendingCreateIdsRef.current.add(tempId);
       setImages((current) => persistLocal(targetWeekKey, [...current, optimistic]));
+      setGalleryImages((current) => mergeCards(current.filter((item) => item.id !== tempId), [optimistic]));
       setPending((current) => ({ ...current, [tempId]: true }));
 
       let imageAspectRatio: number | undefined;
@@ -823,6 +887,7 @@ function JournalApp() {
         URL.revokeObjectURL(previewUrl);
         pendingCreateIdsRef.current.delete(tempId);
         setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setGalleryImages((current) => current.filter((item) => item.id !== tempId));
         setPending((current) => {
           const next = { ...current };
           delete next[tempId];
@@ -835,6 +900,7 @@ function JournalApp() {
         URL.revokeObjectURL(previewUrl);
         pendingCreateIdsRef.current.delete(tempId);
         setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setGalleryImages((current) => current.filter((item) => item.id !== tempId));
         setPending((current) => {
           const next = { ...current };
           delete next[tempId];
@@ -856,6 +922,7 @@ function JournalApp() {
         URL.revokeObjectURL(previewUrl);
         pendingCreateIdsRef.current.delete(tempId);
         setImages((current) => persistLocal(targetWeekKey, current.filter((item) => item.id !== tempId)));
+        setGalleryImages((current) => current.filter((item) => item.id !== tempId));
         setPending((current) => {
           const next = { ...current };
           delete next[tempId];
@@ -873,6 +940,7 @@ function JournalApp() {
       });
       const uploadReadyOptimistic = { ...optimistic, imageDataUrl, sourceFingerprint, imageAspectRatio, analysisNote: "正在调用 AI" };
       setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === tempId ? uploadReadyOptimistic : item))));
+      setGalleryImages((current) => current.map((item) => (item.id === tempId ? uploadReadyOptimistic : item)));
 
       try {
         const analysisImageDataUrl = await imageDataUrlToAnalysisPreview(imageDataUrl);
@@ -907,6 +975,12 @@ function JournalApp() {
             )
           )
         );
+        setGalleryImages((current) =>
+          mergeCards(
+            current.filter((item) => item.id !== tempId),
+            [{ ...resolved, clientId: tempId, sourceFingerprint, imageAspectRatio, analysisNote: resolved.analysisNote || "接口已返回关键词和 prompt" }]
+          )
+        );
         setCardPositions((current) => {
           if (!current[tempId]) return current;
           const next = { ...current, [resolved.id]: current[tempId] };
@@ -919,6 +993,7 @@ function JournalApp() {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "AI 分析接口调用失败";
+        const label = classifyAiFailureLabel(message);
         const fallback = {
           ...uploadReadyOptimistic,
           id: crypto.randomUUID(),
@@ -926,11 +1001,15 @@ function JournalApp() {
           previewUrl: undefined,
           sourceFingerprint,
           imageAspectRatio,
-          keywords: ["AI 未连接"],
-          reversePrompt: "没有配置可用的 GPT/Gemini API Key，应用无法根据图片生成真实关键词和 prompt。",
+          keywords: [label],
+          reversePrompt:
+            label === "余额不足"
+              ? `AI 接口未完成：${message}`
+              : "没有配置可用的 GPT/Gemini API Key，应用无法根据图片生成真实关键词和 prompt。",
           analysisNote: `AI 接口未完成：${message}`
         };
         setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === tempId ? fallback : item))));
+        setGalleryImages((current) => current.map((item) => (item.id === tempId ? fallback : item)));
       } finally {
         URL.revokeObjectURL(previewUrl);
         pendingCreateIdsRef.current.delete(tempId);
@@ -950,7 +1029,9 @@ function JournalApp() {
         const rows = await loadWeek(targetWeekKey);
         const updated = rows.find((item) => item.id === id);
         if (!updated) continue;
-        setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === id ? { ...updated, analysisNote: isAnalyzingCard(updated) ? "AI 正在分析" : "AI 已生成" } : item))));
+        const nextUpdated = { ...updated, analysisNote: isAnalyzingCard(updated) ? "AI 正在分析" : "AI 已生成" };
+        setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === id ? nextUpdated : item))));
+        setGalleryImages((current) => current.map((item) => (item.id === id ? nextUpdated : item)));
         if (!isAnalyzingCard(updated)) return;
       } catch {
         // Keep the optimistic card visible and try again briefly.
@@ -968,6 +1049,7 @@ function JournalApp() {
   async function deleteKeyword(card: InspirationImage, keyword: string) {
     const keywords = card.keywords.filter((item) => item !== keyword);
     setImages((current) => persistLocal(weekKey, current.map((item) => (item.id === card.id ? { ...item, keywords } : item))));
+    setGalleryImages((current) => current.map((item) => (item.id === card.id ? { ...item, keywords } : item)));
     await fetch(`/api/images/${card.id}/keywords`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
@@ -993,6 +1075,7 @@ function JournalApp() {
       return next;
     });
     setImages((current) => persistLocal(weekKey, current.filter((item) => item.id !== card.id)));
+    setGalleryImages((current) => current.filter((item) => item.id !== card.id));
     await fetch(`/api/images/${card.id}`, {
       method: "DELETE",
       headers: await getAuthHeaders()
@@ -1010,8 +1093,14 @@ function JournalApp() {
 
     const todayIndex = findTodayIndex(days.map((_, index) => addDays(startOfWeek(new Date()), index)));
     if (todayIndex < 0) return;
+    centerDayContent(todayIndex);
+  }
 
-    const target = viewport.querySelector<HTMLElement>(`[data-day-index="${todayIndex}"] .polaroid-card`) || viewport.querySelector<HTMLElement>(`[data-day-index="${todayIndex}"] .day-heading`);
+  function centerDayContent(dayIndex: number) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const target = viewport.querySelector<HTMLElement>(`[data-day-index="${dayIndex}"] .polaroid-card`) || viewport.querySelector<HTMLElement>(`[data-day-index="${dayIndex}"] .day-heading`);
     if (target) {
       const viewportRect = viewport.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
@@ -1020,7 +1109,7 @@ function JournalApp() {
       return;
     }
 
-    const targetLeft = (todayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
+    const targetLeft = (dayIndex * columnWidth + columnWidth / 2) * canvasScale - viewport.clientWidth / 2;
     viewport.scrollLeft = Math.max(0, targetLeft);
     viewport.scrollTop = 0;
   }
@@ -1078,7 +1167,7 @@ function JournalApp() {
   }
 
   function imagesForDay(dayIndex: number) {
-    return sortCardsForDay(images.filter((image) => image.dayIndex === dayIndex));
+    return sortCardsForDay(boardImages.filter((image) => image.dayIndex === dayIndex));
   }
 
   return (
@@ -1272,8 +1361,8 @@ function JournalApp() {
                   pending={pending}
                   uiStyle={uiStyle}
                   galleryDepth={galleryDepth}
-                  depthOffset={images.filter((image) => image.dayIndex < dayIndex).length}
-                  totalCards={images.length}
+                  depthOffset={boardImages.filter((image) => image.dayIndex < dayIndex).length}
+                  totalCards={boardImages.length}
                 />
               ))}
             </div>
@@ -1736,8 +1825,8 @@ function PolaroidCard({
             )}
             {renderImageSrc && !imageFailed ? (
               <img
-                className="block h-auto w-full rounded-[1px] opacity-100"
-                style={{ height: "100%", objectFit: uiStyle === "archive" ? "cover" : "contain" }}
+                className="absolute inset-0 block h-full w-full rounded-[1px] opacity-100"
+                style={{ objectFit: uiStyle === "archive" ? "cover" : "contain" }}
                 draggable={false}
                 src={renderImageSrc}
                 alt={card.title}
@@ -2017,7 +2106,20 @@ function weekNumber(date: Date) {
 function findTodayIndex(weekDates: Date[]) {
   const today = formatKey(new Date());
   const index = weekDates.findIndex((date) => formatKey(date) === today);
-  return index >= 0 ? index : 0;
+  return index >= 0 ? index : -1;
+}
+
+function autoCenterDayIndex(weekDates: Date[], rows: InspirationImage[]) {
+  const todayIndex = findTodayIndex(weekDates);
+  if (todayIndex >= 0) return todayIndex;
+
+  const counts = Array.from({ length: 7 }, () => 0);
+  for (const row of rows) {
+    if (row.dayIndex >= 0 && row.dayIndex < counts.length) counts[row.dayIndex] += 1;
+  }
+  const maxCount = Math.max(...counts);
+  if (maxCount <= 0) return -1;
+  return counts.findIndex((count) => count === maxCount);
 }
 
 function randomDecoration(): Decoration {
@@ -2095,17 +2197,51 @@ function touchDistance(first: React.Touch, second: React.Touch) {
 }
 
 function resolveLegacyCard(card: InspirationImage): InspirationImage {
-  if (!isLegacyFallback(card.keywords, card.reversePrompt)) return card;
-  return {
-    ...card,
+  const normalizedFailure = normalizeAiFailureCard(card);
+  if (!isLegacyFallback(normalizedFailure.keywords, normalizedFailure.reversePrompt)) return normalizedFailure;
+  return normalizeAiFailureCard({
+    ...normalizedFailure,
     keywords: ["AI 未连接"],
     reversePrompt: "这张卡片之前使用了无关的本地兜底术语。请配置 GPT/Gemini API Key 后重新上传，才能得到真实图片分析。",
-    analysisNote: card.analysisNote || "旧的无关兜底结果已隐藏，AI 恢复后会自动重试"
-  };
+    analysisNote: normalizedFailure.analysisNote || "旧的无关兜底结果已隐藏，AI 恢复后会自动重试"
+  });
 }
 
 function needsAnalysisRetry(card: InspirationImage) {
-  return card.keywords.includes("AI 未连接") || card.analysisNote?.includes("旧的无关兜底结果");
+  return card.keywords.includes("AI 未连接") || card.keywords.includes("余额不足") || card.analysisNote?.includes("旧的无关兜底结果");
+}
+
+function normalizeAiFailureCard(card: InspirationImage): InspirationImage {
+  const message = `${card.reversePrompt || ""}\n${card.analysisNote || ""}`;
+  const label = classifyAiFailureLabel(message);
+  if (label === "余额不足" && card.keywords.includes("AI 未连接")) {
+    return {
+      ...card,
+      keywords: ["余额不足"],
+      analysisNote: card.analysisNote || "AI 账号余额不足，无法完成分析"
+    };
+  }
+  return card;
+}
+
+function classifyAiFailureLabel(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("overdue balance") ||
+    normalized.includes("insufficient balance") ||
+    normalized.includes("insufficient funds") ||
+    normalized.includes("account balance") ||
+    normalized.includes("billing") ||
+    normalized.includes("quota exceeded") ||
+    normalized.includes("exceeded your current quota") ||
+    normalized.includes("余额不足") ||
+    normalized.includes("账户欠费") ||
+    normalized.includes("账号欠费") ||
+    normalized.includes("额度不足")
+  ) {
+    return "余额不足";
+  }
+  return "AI 未连接";
 }
 
 function needsBilingualPromptUpgrade(card: InspirationImage) {
@@ -2132,15 +2268,6 @@ function appendBilingualPromptRequirement(template: string) {
 补充要求：生图 prompt 必须同时提供两部分。
 中文版本：用中文准确描述画面类型、构图、字体、色彩、材质、肌理、元素关系和禁忌。
 English version：保留原来高质量英文生图 prompt 的表达方式，可直接复制到 AI 生图工具。`;
-}
-
-function ensureBilingualReversePrompt(title: string, keywords: string[], reversePrompt: string) {
-  const prompt = reversePrompt.trim();
-  if (!prompt || containsCjk(prompt)) return prompt;
-  const keywordText = keywords.length ? keywords.join("、") : title || "参考图的构图、色彩、材质、肌理和字体气质";
-  return `中文版本：画面以${keywordText}为核心视觉特征，保留参考图的构图关系、色彩明度、材质肌理、字体气质、信息层级和元素比例；避免多余装饰、偏离原图风格的 3D 质感、厚重阴影、无关文字和不必要的复杂元素。
-
-English version: ${prompt}`;
 }
 
 function isLegacyFallback(keywords: string[], reversePrompt: string) {
@@ -2367,7 +2494,20 @@ function savePositions(positions: Record<string, CardPosition>, storageKey = pos
 function readLocal(weekKey: string): InspirationImage[] {
   try {
     const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
-    return all[weekKey] || [];
+    return rowsForWeek(weekKey, all[weekKey] || []);
+  } catch {
+    return [];
+  }
+}
+
+function readAllLocal(): InspirationImage[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
+    const rows: InspirationImage[] = [];
+    for (const [weekKey, weekRows] of Object.entries(all)) {
+      rows.push(...rowsForWeek(weekKey, weekRows || []));
+    }
+    return rows;
   } catch {
     return [];
   }
@@ -2376,7 +2516,7 @@ function readLocal(weekKey: string): InspirationImage[] {
 function saveLocal(weekKey: string, rows: InspirationImage[]) {
   try {
     const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
-    all[weekKey] = rows.map(stripTransientCardFields);
+    all[weekKey] = rowsForWeek(weekKey, rows).map(stripTransientCardFields);
     localStorage.setItem(localStorageKey, JSON.stringify(all));
   } catch {
     // Large image collections can exceed browser storage quota; the API remains the source of truth.
@@ -2384,8 +2524,13 @@ function saveLocal(weekKey: string, rows: InspirationImage[]) {
 }
 
 function persistLocal(weekKey: string, rows: InspirationImage[]) {
-  saveLocal(weekKey, rows);
-  return rows;
+  const weekRows = rowsForWeek(weekKey, rows);
+  saveLocal(weekKey, weekRows);
+  return weekRows;
+}
+
+function rowsForWeek(weekKey: string, rows: InspirationImage[]) {
+  return rows.filter((row) => row.weekStart === weekKey);
 }
 
 function stripTransientCardFields(card: InspirationImage) {
@@ -2441,7 +2586,7 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
       ...row,
       clientId: local?.clientId,
       sourceFingerprint: local?.sourceFingerprint,
-      imageAspectRatio: local?.imageAspectRatio,
+      imageAspectRatio: local?.imageAspectRatio ?? row.imageAspectRatio,
       imageUrl: shouldKeepLocalImageUrl(local, row) ? local?.imageUrl : row.imageUrl
     });
   }

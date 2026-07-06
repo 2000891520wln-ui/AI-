@@ -65,7 +65,6 @@ async function generatePrompt(srcUrl, tabId) {
     const { settings, imageDataUrl } = await prepareImage(srcUrl);
     const promptImageDataUrl = await optimizePromptImage(imageDataUrl);
     const analysis = await analyzePrompt(settings, promptImageDataUrl, srcUrl);
-
     await showPromptOverlayInTab(tabId, analysis.reversePrompt || "", "ready");
   } catch (error) {
     await showPromptOverlayInTab(tabId, `生成失败：${errorMessage(error)}`, "error");
@@ -162,12 +161,23 @@ async function optimizePromptImage(imageDataUrl) {
   }
 }
 
-async function postJson(url, payload, headers = {}) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(payload)
-  });
+async function postJson(url, payload, headers = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error(`接口超时：${Math.round(timeoutMs / 1000)} 秒内没有返回`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(body.error || `接口调用失败：${response.status}`);
@@ -176,7 +186,7 @@ async function postJson(url, payload, headers = {}) {
 }
 
 async function postApi(settings, path, payload) {
-  const bases = getApiBases(settings);
+  const bases = await getApiBases(settings);
   const errors = [];
   const authHeaders = await getJournalAuthHeaders(settings);
 
@@ -254,7 +264,7 @@ async function legacyAnalyzePrompt(settings, imageDataUrl, srcUrl) {
   };
   const errors = [];
 
-  for (const base of getApiBases(settings)) {
+  for (const base of await getApiBases(settings)) {
     let row;
     try {
       row = await postJson(`${base}/api/images`, payload);
@@ -270,18 +280,15 @@ async function legacyAnalyzePrompt(settings, imageDataUrl, srcUrl) {
   throw new Error(errors.join("；") || "没有可用旧接口");
 }
 
-function getApiBases(settings) {
-  return unique([
-    "http://localhost:8792",
-    "http://127.0.0.1:8792",
-    settings.apiBaseUrl,
-    settings.appUrl,
-    DEFAULT_SETTINGS.apiBaseUrl,
-    "http://localhost:8787",
-    "http://localhost:8791",
-    "http://127.0.0.1:8787",
-    "http://127.0.0.1:8791"
-  ]);
+async function getApiBases(settings) {
+  const localBases = ["http://localhost:8792", "http://127.0.0.1:8792", "http://localhost:8787", "http://localhost:8791", "http://127.0.0.1:8787", "http://127.0.0.1:8791"];
+  const configuredBases = [settings.apiBaseUrl, settings.appUrl, DEFAULT_SETTINGS.apiBaseUrl];
+  return hasLocalJournalTab() ? unique([...localBases, ...configuredBases]) : unique([...configuredBases, ...localBases]);
+}
+
+async function hasLocalJournalTab() {
+  const tabs = await chrome.tabs.query({ url: ["http://localhost/*", "http://127.0.0.1/*"] }).catch(() => []);
+  return tabs.some((tab) => /https?:\/\/(localhost|127\.0\.0\.1):(5173|5174|5175|5176)\//.test(tab.url || ""));
 }
 
 function unique(items) {

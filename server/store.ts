@@ -11,6 +11,19 @@ let persistQueue = Promise.resolve();
 
 export function createStore(db: Database | null) {
   return {
+    async listAll(userId: string, limit = 500) {
+      if (db) {
+        const rows = await db.query.inspirationImages.findMany({
+          orderBy: [desc(inspirationImages.updatedAt)]
+        });
+        return rows.slice(0, limit);
+      }
+      return [...memory.values()]
+        .filter((item) => canAccessLocalRow(item, userId))
+        .sort((left, right) => timestampOf(right.updatedAt) - timestampOf(left.updatedAt))
+        .slice(0, limit);
+    },
+
     async listByWeek(weekStart: string, userId: string) {
       if (db) {
         return db.query.inspirationImages.findMany({

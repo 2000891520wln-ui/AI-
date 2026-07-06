@@ -2249,7 +2249,13 @@ function needsBilingualPromptUpgrade(card: InspirationImage) {
   if (!prompt) return false;
   if (isAnalyzingCard(card) || needsAnalysisRetry(card)) return false;
   if (prompt.includes("AI 正在分析") || prompt.includes("AI 接口未完成") || prompt.includes("没有配置可用")) return false;
-  return !containsCjk(prompt);
+  const english = prompt.match(/English\s*(?:version|Prompt)\s*[:：]\s*([\s\S]*)/i)?.[1] || "";
+  return (
+    !/中文(?:版本|版|\s*Prompt)?\s*[:：]/i.test(prompt) ||
+    !english ||
+    containsCjk(english) ||
+    /画面以.+为核心视觉特征|保留参考图的构图关系|围绕.+建立风格/.test(prompt)
+  );
 }
 
 function containsCjk(value: string) {

@@ -561,7 +561,7 @@ function ensureBilingualReversePrompt(reversePrompt: string, keywords: string[])
   if (englishCjkCount > 0) {
     throw new Error("模型输出的 English version 混入了中文");
   }
-  if (requiredSignals.filter((pattern) => pattern.test(combined)).length < 7) {
+  if (requiredSignals.filter((pattern) => pattern.test(combined)).length < 5) {
     throw new Error("模型输出没有覆盖完整的视觉分析维度");
   }
   if (/画面以.+为核心视觉特征|保留参考图的构图关系|围绕.+建立风格/.test(chinese)) {

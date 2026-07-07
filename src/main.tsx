@@ -350,7 +350,7 @@ function JournalApp() {
           );
 
           if (!card.id.startsWith("temp-")) {
-            void fetch(`/api/images/${card.id}/analysis`, {
+            await fetch(`/api/images/${card.id}/analysis`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
               body: JSON.stringify(analysis)
@@ -406,6 +406,7 @@ function JournalApp() {
             delete next[card.id];
             return next;
           });
+          analysisRetryIdsRef.current.delete(card.id);
         }
       }
     })();
@@ -2616,13 +2617,17 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
   for (const row of serverRows) {
     const local = rows.get(row.id);
     if (!local) order.push(row.id);
+    const shouldKeepLocalAnalysis = local && hasResolvedAnalysis(local) && needsAnalysisRetry(row);
     rows.set(row.id, {
       ...local,
       ...row,
       clientId: local?.clientId,
       sourceFingerprint: local?.sourceFingerprint,
       imageAspectRatio: local?.imageAspectRatio ?? row.imageAspectRatio,
-      imageUrl: shouldKeepLocalImageUrl(local, row) ? local?.imageUrl : row.imageUrl
+      imageUrl: shouldKeepLocalImageUrl(local, row) ? local?.imageUrl : row.imageUrl,
+      keywords: shouldKeepLocalAnalysis ? local.keywords : row.keywords,
+      reversePrompt: shouldKeepLocalAnalysis ? local.reversePrompt : row.reversePrompt,
+      analysisNote: shouldKeepLocalAnalysis ? local.analysisNote : row.analysisNote
     });
   }
   return order.map((id) => rows.get(id)).filter(Boolean) as InspirationImage[];
@@ -2630,6 +2635,10 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
 
 function shouldKeepLocalImageUrl(local: InspirationImage | undefined, next: InspirationImage) {
   return Boolean(local?.imageUrl && local.storagePath && local.storagePath === next.storagePath && !local.imageDataUrl);
+}
+
+function hasResolvedAnalysis(card: InspirationImage) {
+  return !isAnalyzingCard(card) && !needsAnalysisRetry(card) && Boolean(card.reversePrompt?.trim()) && card.keywords.length >= 2;
 }
 
 function timestampOf(value?: string) {

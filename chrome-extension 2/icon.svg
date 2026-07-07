@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-label="AI Journal logo">
+  <rect width="384" height="384" fill="#2b2219"/>
+  <path fill="#ffde4a" d="M82 54c8 35 17 43 52 51-35 8-44 17-52 52-8-35-17-44-52-52 35-8 44-16 52-51Z"/>
+  <path
+    fill="none"
+    stroke="#fff6d8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="38"
+    d="M63 269c33 0 52-29 75-68l40-69c18-31 39-43 60-30 19 12 17 44 14 74l-5 54c-2 23 4 35 20 34 19-1 27-26 39-48 13-24 27-34 45-27 18 7 17 26 16 45l-1 25"
+  />
+</svg>

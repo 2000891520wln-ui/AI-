@@ -8,7 +8,7 @@ import { createDb } from "./db/client";
 import type { InspirationImage } from "./db/schema";
 import { analyzeDesignImage, getAiStatus } from "./openai";
 import { createStore } from "./store";
-import { createSignedImageUrl, getUserIdFromAuthHeader, isSupabaseConfigured, uploadImageToStorage } from "./supabase";
+import { createSignedImageUrl, createSignedImageUrls, getUserIdFromAuthHeader, isSupabaseConfigured, uploadImageToStorage } from "./supabase";
 
 loadEnvFile();
 
@@ -113,19 +113,16 @@ app.post("/api/storage/signed-urls", async (req, res, next) => {
     const userId = isLocalRecoveryRequest ? "" : await getUserIdFromAuthHeader(req.headers.authorization);
     const input = signedUrlsSchema.parse(req.body);
     const storagePaths = [...new Set(input.storagePaths)];
-    const urls: Record<string, string> = {};
-
-    for (const storagePath of storagePaths) {
-      if (
+    const allowedStoragePaths = storagePaths.filter(
+      (storagePath) =>
+        !(
         isSupabaseConfigured() &&
         !isLocalRecoveryRequest &&
         !storagePath.startsWith(`${userId}/`) &&
         !storagePath.startsWith("local-dev-user/")
-      ) {
-        continue;
-      }
-      urls[storagePath] = await createSignedImageUrl(storagePath);
-    }
+        )
+    );
+    const urls = await createSignedImageUrls(allowedStoragePaths);
 
     res.json({ urls });
   } catch (error) {
@@ -319,7 +316,10 @@ function classifyAiFailureLabel(message: string) {
 }
 
 async function withSignedImageUrls(rows: InspirationImage[]) {
-  return Promise.all(rows.map((row) => withSignedImageUrl(row)));
+  const paths = rows.flatMap((row) => (row.storagePath ? [row.storagePath] : []));
+  if (!paths.length) return rows;
+  const urls = await createSignedImageUrls(paths);
+  return rows.map((row) => (row.storagePath && urls[row.storagePath] ? { ...row, imageUrl: urls[row.storagePath] } : row));
 }
 
 async function withSignedImageUrl(row: InspirationImage) {

@@ -75,6 +75,19 @@ export async function createSignedImageUrl(storagePath: string | null | undefine
   return data.signedUrl;
 }
 
+export async function createSignedImageUrls(storagePaths: string[]) {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET;
+  const supabase = getSupabaseAdmin();
+  if (!bucket || !supabase || !storagePaths.length) return {};
+
+  const uniquePaths = [...new Set(storagePaths)];
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrls(uniquePaths, signedUrlExpiresInSeconds);
+  if (error) throw new Error(`图片签名链接批量生成失败：${error.message}`);
+  return Object.fromEntries(
+    (data || []).flatMap((item) => (item.path && item.signedUrl ? [[item.path, item.signedUrl]] : []))
+  ) as Record<string, string>;
+}
+
 function parseImageDataUrl(imageDataUrl: string) {
   const match = imageDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
   if (!match) throw new Error("图片格式不是有效的 data URL");

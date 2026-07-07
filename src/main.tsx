@@ -62,7 +62,7 @@ type SearchSuggestion = {
 
 const loadedImageSourceCache = new Map<string, string>();
 const persistentImageLoadPromises = new Map<string, Promise<string>>();
-const persistentImageCacheName = "ai-journal-cover-images-v1";
+const persistentImageCacheName = "ai-journal-cover-images-v2";
 
 type UiStyle = "journal" | "gallery" | "archive";
 
@@ -118,6 +118,7 @@ function JournalApp() {
   const defaultTemplate = React.useMemo(() => readDefaultPromptTemplate(), []);
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [images, setImages] = React.useState<InspirationImage[]>([]);
+  const [weekLoading, setWeekLoading] = React.useState(false);
   const [galleryImages, setGalleryImages] = React.useState<InspirationImage[]>([]);
   const [activeCard, setActiveCard] = React.useState<InspirationImage | null>(null);
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
@@ -501,7 +502,11 @@ function JournalApp() {
   }, []);
 
   React.useEffect(() => {
-    loadWeek(weekKey).then(setImages);
+    const deletedIds = currentDeletedCards(deletedCardIdsRef);
+    const cachedRows = readLocal(weekKey).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
+    setImages(cachedRows);
+    setWeekLoading(true);
+    loadWeek(weekKey).then(setImages).finally(() => setWeekLoading(false));
   }, [weekKey]);
 
   React.useEffect(() => {
@@ -760,12 +765,15 @@ function JournalApp() {
     if (card.storagePath && !card.imageDataUrl) {
       void refreshSignedImageUrls([{ ...card, imageUrl: null }]).then(([refreshedCard]) => {
         if (!refreshedCard?.imageUrl || refreshedCard.imageUrl === card.imageUrl) return;
-        loadedImageSourceCache.delete(card.clientId || card.id);
+        loadedImageSourceCache.delete(card.storagePath || card.clientId || card.id);
         setImages((current) =>
           persistLocal(
             card.weekStart,
             current.map((item) => (item.id === card.id ? { ...item, imageUrl: refreshedCard.imageUrl } : item))
           )
+        );
+        setGalleryImages((current) =>
+          current.map((item) => (item.id === card.id ? { ...item, imageUrl: refreshedCard.imageUrl } : item))
         );
       });
       return;
@@ -830,9 +838,7 @@ function JournalApp() {
 
   async function loadWeek(key: string) {
     const deletedIds = currentDeletedCards(deletedCardIdsRef);
-    const localRows = await refreshSignedImageUrls(
-      readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard)
-    );
+    const localRows = readLocal(key).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
     try {
       const response = await fetch(`/api/images?weekStart=${key}`, {
         headers: await getAuthHeaders()
@@ -1233,6 +1239,7 @@ function JournalApp() {
             </h1>
             <span className="h-7 w-px bg-zinc-300 dark:bg-zinc-700" />
             <p className="text-sm text-zinc-500 dark:text-zinc-400">{formatRange(weekStart, addDays(weekStart, 6))}</p>
+            {weekLoading ? <span className="text-[11px] font-sans text-zinc-400">载入中…</span> : null}
           </div>
           <div ref={searchBoxRef} className="relative min-w-[280px] flex-1 max-w-[560px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -1912,10 +1919,12 @@ function PolaroidCard({
                 onError={() => {
                   if (renderImageSrc !== imageSrc && imageSrc) {
                     loadedImageSourceCache.delete(imageCacheKey);
+                    void invalidatePersistentImageCache(imageCacheKey);
                     setRenderImageSrc(imageSrc);
                     return;
                   }
                   loadedImageSourceCache.delete(imageCacheKey);
+                  void invalidatePersistentImageCache(imageCacheKey);
                   setImageFailed(true);
                   onImageLoadError(card);
                 }}
@@ -2535,6 +2544,12 @@ function persistentImageCacheRequest(cacheKey: string) {
   return new Request(`${window.location.origin}/__ai-journal-cover-cache__/${encodeURIComponent(cacheKey)}`);
 }
 
+async function invalidatePersistentImageCache(cacheKey: string) {
+  if (!("caches" in window)) return;
+  const cache = await caches.open(persistentImageCacheName);
+  await cache.delete(persistentImageCacheRequest(cacheKey));
+}
+
 async function warmPersistentImageCache(cards: InspirationImage[]) {
   const queue = cards.filter((card) => card.storagePath && card.imageUrl && !loadedImageSourceCache.has(card.storagePath));
   let cursor = 0;
@@ -2714,17 +2729,13 @@ function mergeCards(localRows: InspirationImage[], serverRows: InspirationImage[
       clientId: local?.clientId,
       sourceFingerprint: local?.sourceFingerprint,
       imageAspectRatio: local?.imageAspectRatio ?? row.imageAspectRatio,
-      imageUrl: shouldKeepLocalImageUrl(local, row) ? local?.imageUrl : row.imageUrl,
+      imageUrl: row.imageUrl || local?.imageUrl,
       keywords: shouldKeepLocalAnalysis ? local.keywords : row.keywords,
       reversePrompt: shouldKeepLocalAnalysis ? local.reversePrompt : row.reversePrompt,
       analysisNote: shouldKeepLocalAnalysis ? local.analysisNote : row.analysisNote
     });
   }
   return order.map((id) => rows.get(id)).filter(Boolean) as InspirationImage[];
-}
-
-function shouldKeepLocalImageUrl(local: InspirationImage | undefined, next: InspirationImage) {
-  return Boolean(local?.imageUrl && local.storagePath && local.storagePath === next.storagePath && !local.imageDataUrl);
 }
 
 function hasResolvedAnalysis(card: InspirationImage) {

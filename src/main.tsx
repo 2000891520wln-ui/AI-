@@ -61,6 +61,8 @@ type SearchSuggestion = {
 };
 
 const loadedImageSourceCache = new Map<string, string>();
+const persistentImageLoadPromises = new Map<string, Promise<string>>();
+const persistentImageCacheName = "ai-journal-cover-images-v1";
 
 type UiStyle = "journal" | "gallery" | "archive";
 
@@ -501,6 +503,26 @@ function JournalApp() {
   React.useEffect(() => {
     loadWeek(weekKey).then(setImages);
   }, [weekKey]);
+
+  React.useEffect(() => {
+    const cards = uiStyle === "gallery" ? galleryImages : images;
+    const remoteCards = cards.filter((card) => card.storagePath && card.imageUrl && !card.imageDataUrl);
+    if (!remoteCards.length) return;
+
+    const warmCovers = () => {
+      void warmPersistentImageCache(remoteCards);
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      const idleId = idleWindow.requestIdleCallback(warmCovers, { timeout: 2500 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+    const timer = globalThis.setTimeout(warmCovers, 1200);
+    return () => globalThis.clearTimeout(timer);
+  }, [galleryImages, images, uiStyle]);
 
   React.useEffect(() => {
     if (uiStyle !== "gallery") return;
@@ -1663,6 +1685,7 @@ function PolaroidCard({
 }) {
   const [open, setOpen] = React.useState(false);
   const [imageFailed, setImageFailed] = React.useState(false);
+  const [imageNearViewport, setImageNearViewport] = React.useState(false);
   const cardRef = React.useRef<HTMLElement | null>(null);
   const closeTimerRef = React.useRef<number | null>(null);
   const dragRef = React.useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
@@ -1673,8 +1696,10 @@ function PolaroidCard({
   const extra = Math.max(0, card.keywords.length - 1);
   const layout = cardLayout(index, uiStyle);
   const imageSrc = getCardImageSrc(card);
-  const imageCacheKey = card.clientId || card.id;
-  const [renderImageSrc, setRenderImageSrc] = React.useState(() => loadedImageSourceCache.get(imageCacheKey) || imageSrc);
+  const imageCacheKey = card.storagePath || card.clientId || card.id;
+  const [renderImageSrc, setRenderImageSrc] = React.useState(
+    () => loadedImageSourceCache.get(imageCacheKey) || (card.storagePath ? "" : imageSrc)
+  );
   const [stableImageSrc, setStableImageSrc] = React.useState(() => loadedImageSourceCache.get(imageCacheKey) || "");
   const imageAspectRatio = card.imageAspectRatio && Number.isFinite(card.imageAspectRatio) ? card.imageAspectRatio : 1 / 1.28;
   const activePosition = draftPosition || position || { x: 0, y: 0 };
@@ -1699,6 +1724,23 @@ function PolaroidCard({
       : 1;
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
+    const element = cardRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setImageNearViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setImageNearViewport(true);
+        observer.disconnect();
+      },
+      { rootMargin: "600px" }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  React.useEffect(() => {
     setImageFailed(false);
     if (!imageSrc) {
       setRenderImageSrc("");
@@ -1712,23 +1754,24 @@ function PolaroidCard({
     }
     const cachedImageSrc = loadedImageSourceCache.get(imageCacheKey);
     if (cachedImageSrc) setStableImageSrc(cachedImageSrc);
-    setRenderImageSrc(cachedImageSrc || imageSrc);
-  }, [imageCacheKey, imageSrc]);
+    setRenderImageSrc(cachedImageSrc || (card.storagePath ? "" : imageSrc));
+  }, [card.storagePath, imageCacheKey, imageSrc]);
   React.useEffect(() => {
-    if (!imageSrc || loadedImageSourceCache.has(imageCacheKey)) return;
+    if (!imageNearViewport || !imageSrc || loadedImageSourceCache.has(imageCacheKey)) return;
     let cancelled = false;
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => {
-      if (cancelled) return;
-      loadedImageSourceCache.set(imageCacheKey, imageSrc);
-      setStableImageSrc(imageSrc);
-    };
-    image.src = imageSrc;
+    void loadPersistentImageSource(imageCacheKey, imageSrc)
+      .then((source) => {
+        if (cancelled) return;
+        setRenderImageSrc(source);
+        setStableImageSrc(source);
+      })
+      .catch(() => {
+        if (!cancelled) setRenderImageSrc(imageSrc);
+      });
     return () => {
       cancelled = true;
     };
-  }, [imageCacheKey, imageSrc]);
+  }, [imageCacheKey, imageNearViewport, imageSrc]);
   const showPanel = React.useCallback(() => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
     setOpen(true);
@@ -2456,6 +2499,53 @@ async function imageSrcToPngBlob(imageSrc: string) {
 
 function getCardImageSrc(card: InspirationImage) {
   return card.previewUrl || card.imageDataUrl || card.imageUrl || "";
+}
+
+async function loadPersistentImageSource(cacheKey: string, imageSrc: string) {
+  if (!imageSrc || imageSrc.startsWith("data:") || imageSrc.startsWith("blob:")) return imageSrc;
+  const memorySource = loadedImageSourceCache.get(cacheKey);
+  if (memorySource) return memorySource;
+
+  const pending = persistentImageLoadPromises.get(cacheKey);
+  if (pending) return pending;
+
+  const loadPromise = (async () => {
+    if (!("caches" in window)) return imageSrc;
+    const cache = await caches.open(persistentImageCacheName);
+    const request = persistentImageCacheRequest(cacheKey);
+    let response = await cache.match(request);
+    if (!response) {
+      const remoteResponse = await fetch(imageSrc, { cache: "force-cache" });
+      if (!remoteResponse.ok) throw new Error("cover image request failed");
+      response = remoteResponse.clone();
+      await cache.put(request, remoteResponse.clone());
+    }
+    const blobUrl = URL.createObjectURL(await response.blob());
+    loadedImageSourceCache.set(cacheKey, blobUrl);
+    return blobUrl;
+  })().finally(() => {
+    persistentImageLoadPromises.delete(cacheKey);
+  });
+
+  persistentImageLoadPromises.set(cacheKey, loadPromise);
+  return loadPromise;
+}
+
+function persistentImageCacheRequest(cacheKey: string) {
+  return new Request(`${window.location.origin}/__ai-journal-cover-cache__/${encodeURIComponent(cacheKey)}`);
+}
+
+async function warmPersistentImageCache(cards: InspirationImage[]) {
+  const queue = cards.filter((card) => card.storagePath && card.imageUrl && !loadedImageSourceCache.has(card.storagePath));
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (cursor < queue.length) {
+      const card = queue[cursor++];
+      if (!card?.storagePath || !card.imageUrl) continue;
+      await loadPersistentImageSource(card.storagePath, card.imageUrl).catch(() => undefined);
+    }
+  });
+  await Promise.all(workers);
 }
 
 let supabaseClient: SupabaseClient | null = null;

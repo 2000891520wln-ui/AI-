@@ -63,6 +63,9 @@ type SearchSuggestion = {
 const loadedImageSourceCache = new Map<string, string>();
 const persistentImageLoadPromises = new Map<string, Promise<string>>();
 const persistentImageCacheName = "ai-journal-cover-images-v2";
+const persistentImageQueue: Array<() => void> = [];
+let activePersistentImageLoads = 0;
+const maxPersistentImageLoads = 6;
 
 type UiStyle = "journal" | "gallery" | "archive";
 
@@ -531,6 +534,8 @@ function JournalApp() {
 
   React.useEffect(() => {
     if (uiStyle !== "gallery") return;
+    const deletedIds = currentDeletedCards(deletedCardIdsRef);
+    setGalleryImages(readAllLocal().filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard));
     void loadAllImages().then(setGalleryImages);
   }, [uiStyle]);
 
@@ -858,7 +863,7 @@ function JournalApp() {
 
   async function loadAllImages() {
     const deletedIds = currentDeletedCards(deletedCardIdsRef);
-    const localRows = await refreshSignedImageUrls(readAllLocal().filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard));
+    const localRows = readAllLocal().filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
     try {
       const response = await fetch("/api/images/all?limit=800", {
         headers: await getAuthHeaders()
@@ -1692,7 +1697,7 @@ function PolaroidCard({
 }) {
   const [open, setOpen] = React.useState(false);
   const [imageFailed, setImageFailed] = React.useState(false);
-  const [imageNearViewport, setImageNearViewport] = React.useState(false);
+  const [imageNearViewport, setImageNearViewport] = React.useState(uiStyle === "gallery");
   const cardRef = React.useRef<HTMLElement | null>(null);
   const closeTimerRef = React.useRef<number | null>(null);
   const dragRef = React.useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
@@ -1731,6 +1736,10 @@ function PolaroidCard({
       : 1;
   latestPositionRef.current = activePosition;
   React.useEffect(() => {
+    if (uiStyle === "gallery") {
+      setImageNearViewport(true);
+      return;
+    }
     const element = cardRef.current;
     if (!element || typeof IntersectionObserver === "undefined") {
       setImageNearViewport(true);
@@ -1746,7 +1755,7 @@ function PolaroidCard({
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [uiStyle]);
   React.useEffect(() => {
     setImageFailed(false);
     if (!imageSrc) {
@@ -2518,7 +2527,7 @@ async function loadPersistentImageSource(cacheKey: string, imageSrc: string) {
   const pending = persistentImageLoadPromises.get(cacheKey);
   if (pending) return pending;
 
-  const loadPromise = (async () => {
+  const loadPromise = schedulePersistentImageLoad(async () => {
     if (!("caches" in window)) return imageSrc;
     const cache = await caches.open(persistentImageCacheName);
     const request = persistentImageCacheRequest(cacheKey);
@@ -2532,12 +2541,28 @@ async function loadPersistentImageSource(cacheKey: string, imageSrc: string) {
     const blobUrl = URL.createObjectURL(await response.blob());
     loadedImageSourceCache.set(cacheKey, blobUrl);
     return blobUrl;
-  })().finally(() => {
+  }).finally(() => {
     persistentImageLoadPromises.delete(cacheKey);
   });
 
   persistentImageLoadPromises.set(cacheKey, loadPromise);
   return loadPromise;
+}
+
+function schedulePersistentImageLoad<T>(task: () => Promise<T>) {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activePersistentImageLoads += 1;
+      void task()
+        .then(resolve, reject)
+        .finally(() => {
+          activePersistentImageLoads -= 1;
+          persistentImageQueue.shift()?.();
+        });
+    };
+    if (activePersistentImageLoads < maxPersistentImageLoads) run();
+    else persistentImageQueue.push(run);
+  });
 }
 
 function persistentImageCacheRequest(cacheKey: string) {

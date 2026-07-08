@@ -162,9 +162,13 @@ function JournalApp() {
   const analysisRetryTimerRef = React.useRef<number | null>(null);
   const bilingualPromptUpgradeIdsRef = React.useRef(new Set<string>());
   const imagesRef = React.useRef<InspirationImage[]>([]);
+  const activeWeekKeyRef = React.useRef("");
+  const weekLoadSequenceRef = React.useRef(0);
+  const scheduledCenterFrameRef = React.useRef<number | null>(null);
   const [analysisRetryTick, setAnalysisRetryTick] = React.useState(0);
   const weekStart = React.useMemo(() => startOfWeek(addDays(new Date(), weekOffset * 7)), [weekOffset]);
   const weekKey = formatKey(weekStart);
+  activeWeekKeyRef.current = weekKey;
   const weekDates = React.useMemo(() => days.map((_, index) => addDays(weekStart, index)), [weekStart]);
   const todayWeekKey = React.useMemo(() => formatKey(startOfWeek(new Date())), []);
 
@@ -226,6 +230,9 @@ function JournalApp() {
     () => () => {
       if (analysisRetryTimerRef.current !== null) {
         window.clearTimeout(analysisRetryTimerRef.current);
+      }
+      if (scheduledCenterFrameRef.current !== null) {
+        cancelAnimationFrame(scheduledCenterFrameRef.current);
       }
     },
     []
@@ -505,11 +512,25 @@ function JournalApp() {
   }, []);
 
   React.useEffect(() => {
+    const requestSequence = ++weekLoadSequenceRef.current;
+    let cancelled = false;
     const deletedIds = currentDeletedCards(deletedCardIdsRef);
     const cachedRows = readLocal(weekKey).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
     setImages(cachedRows);
     setWeekLoading(true);
-    loadWeek(weekKey).then(setImages).finally(() => setWeekLoading(false));
+    void loadWeek(weekKey)
+      .then((rows) => {
+        if (cancelled || requestSequence !== weekLoadSequenceRef.current || activeWeekKeyRef.current !== weekKey) return;
+        setImages(rows);
+      })
+      .finally(() => {
+        if (!cancelled && requestSequence === weekLoadSequenceRef.current && activeWeekKeyRef.current === weekKey) {
+          setWeekLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [weekKey]);
 
   React.useEffect(() => {
@@ -543,7 +564,10 @@ function JournalApp() {
     const syncWeek = () => {
       if (document.hidden) return;
       if (pendingCreateIdsRef.current.size > 0) return;
-      void loadWeek(weekKey).then((rows) => applySyncedRows(rows, weekKey));
+      const requestedWeekKey = weekKey;
+      void loadWeek(requestedWeekKey).then((rows) => {
+        if (activeWeekKeyRef.current === requestedWeekKey) applySyncedRows(rows, requestedWeekKey);
+      });
       if (uiStyle === "gallery") void loadAllImages().then(setGalleryImages);
     };
     const timer = window.setInterval(syncWeek, 2500);
@@ -574,7 +598,7 @@ function JournalApp() {
     pendingFlatViewportRestoreRef.current = null;
   }, [canvasScale, uiStyle]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const weekRows = rowsForWeek(weekKey, images);
     const targetDayIndex = autoCenterDayIndex(weekDates, weekRows);
@@ -582,9 +606,7 @@ function JournalApp() {
     if (!viewport || uiStyle === "gallery" || targetDayIndex < 0 || centeredWeekRef.current === centerKey) return;
 
     centeredWeekRef.current = centerKey;
-    requestAnimationFrame(() => {
-      centerDayContent(targetDayIndex);
-    });
+    centerDayContent(targetDayIndex);
   }, [canvasScale, images, uiStyle, weekDates, weekKey]);
 
   React.useLayoutEffect(() => {
@@ -592,7 +614,7 @@ function JournalApp() {
     if (!viewport || uiStyle !== "gallery") return;
 
     centerGalleryContent();
-  }, [canvasScale, galleryImages.length, uiStyle, weekKey]);
+  }, [canvasScale, galleryImages.length, uiStyle]);
 
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
@@ -753,6 +775,7 @@ function JournalApp() {
   }
 
   function applySyncedRows(rows: InspirationImage[], targetWeekKey = weekKey) {
+    if (targetWeekKey !== activeWeekKeyRef.current) return;
     setImages((current) => {
       const protectedRows = current.filter((item) => item.weekStart === targetWeekKey && (pendingCreateIdsRef.current.has(item.id) || item.id.startsWith("temp-")));
       const deletedIds = currentDeletedCards(deletedCardIdsRef);
@@ -1093,7 +1116,9 @@ function JournalApp() {
         const updated = rows.find((item) => item.id === id);
         if (!updated) continue;
         const nextUpdated = { ...updated, analysisNote: isAnalyzingCard(updated) ? "AI 正在分析" : "AI 已生成" };
-        setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === id ? nextUpdated : item))));
+        if (activeWeekKeyRef.current === targetWeekKey) {
+          setImages((current) => persistLocal(targetWeekKey, current.map((item) => (item.id === id ? nextUpdated : item))));
+        }
         setGalleryImages((current) => current.map((item) => (item.id === id ? nextUpdated : item)));
         if (!isAnalyzingCard(updated)) return;
       } catch {
@@ -1104,7 +1129,7 @@ function JournalApp() {
 
   async function addFilesToToday(files: File[]) {
     if (weekKey !== todayWeekKey) {
-      setWeekOffset(0);
+      navigateToWeekOffset(0);
     }
     await addFiles(files, findTodayIndex(days.map((_, index) => addDays(startOfWeek(new Date()), index))), todayWeekKey);
   }
@@ -1204,6 +1229,33 @@ function JournalApp() {
     viewport.scrollTop = Math.max(0, viewport.scrollTop + topmost - viewportRect.top - (viewport.clientHeight - groupHeight) / 2);
   }
 
+  function navigateToWeekOffset(nextOffset: number) {
+    const nextWeekKey = formatKey(startOfWeek(addDays(new Date(), nextOffset * 7)));
+    const deletedIds = currentDeletedCards(deletedCardIdsRef);
+    const cachedRows = readLocal(nextWeekKey).filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard);
+    cancelScheduledCenter();
+    activeWeekKeyRef.current = nextWeekKey;
+    weekLoadSequenceRef.current += 1;
+    centeredWeekRef.current = null;
+    setWeekLoading(true);
+    if (uiStyle !== "gallery") setImages(cachedRows);
+    setWeekOffset(nextOffset);
+  }
+
+  function cancelScheduledCenter() {
+    if (scheduledCenterFrameRef.current === null) return;
+    cancelAnimationFrame(scheduledCenterFrameRef.current);
+    scheduledCenterFrameRef.current = null;
+  }
+
+  function scheduleCenter(callback: () => void) {
+    cancelScheduledCenter();
+    scheduledCenterFrameRef.current = requestAnimationFrame(() => {
+      scheduledCenterFrameRef.current = null;
+      callback();
+    });
+  }
+
   function goToToday() {
     centeredWeekRef.current = null;
     setSearchMode(false);
@@ -1211,10 +1263,13 @@ function JournalApp() {
     setSearchResults([]);
     setSearchSuggestions([]);
     setSearchLoading(false);
-    setWeekOffset(0);
-    if (uiStyle === "gallery") setGalleryDepth(0);
-    window.setTimeout(centerTodayContent, 80);
-    window.setTimeout(centerTodayContent, 220);
+    if (weekOffset !== 0) navigateToWeekOffset(0);
+    if (uiStyle === "gallery") {
+      setGalleryDepth(0);
+      scheduleCenter(centerGalleryContent);
+    } else if (weekOffset === 0) {
+      scheduleCenter(centerTodayContent);
+    }
   }
 
   function jumpToSearchResult(card: InspirationImage) {
@@ -1268,13 +1323,13 @@ function JournalApp() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="上一周">
+            <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => navigateToWeekOffset(weekOffset - 1)} aria-label="上一周">
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button variant="outline" className="top-nav-button h-9 rounded-md bg-white/90 px-4 text-xs dark:bg-zinc-900/80" onClick={goToToday}>
               Today
             </Button>
-            <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="下一周">
+            <Button variant="ghost" size="icon" className="top-nav-button" onClick={() => navigateToWeekOffset(weekOffset + 1)} aria-label="下一周">
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

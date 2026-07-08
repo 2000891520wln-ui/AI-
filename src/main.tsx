@@ -61,6 +61,7 @@ type SearchSuggestion = {
 };
 
 const loadedImageSourceCache = new Map<string, string>();
+const weekImageMemoryCache = new Map<string, InspirationImage[]>();
 const persistentImageLoadPromises = new Map<string, Promise<string>>();
 const persistentImageCacheName = "ai-journal-cover-images-v2";
 const persistentImageQueue: Array<() => void> = [];
@@ -521,7 +522,7 @@ function JournalApp() {
     void loadWeek(weekKey)
       .then((rows) => {
         if (cancelled || requestSequence !== weekLoadSequenceRef.current || activeWeekKeyRef.current !== weekKey) return;
-        setImages(rows);
+        setImages((current) => (sameCards(current, rows) ? current : rows));
       })
       .finally(() => {
         if (!cancelled && requestSequence === weekLoadSequenceRef.current && activeWeekKeyRef.current === weekKey) {
@@ -2720,9 +2721,13 @@ function savePositions(positions: Record<string, CardPosition>, storageKey = pos
 }
 
 function readLocal(weekKey: string): InspirationImage[] {
+  const memoryRows = weekImageMemoryCache.get(weekKey);
+  if (memoryRows) return memoryRows;
   try {
     const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
-    return rowsForWeek(weekKey, all[weekKey] || []);
+    const rows = rowsForWeek(weekKey, all[weekKey] || []);
+    weekImageMemoryCache.set(weekKey, rows);
+    return rows;
   } catch {
     return [];
   }
@@ -2742,9 +2747,11 @@ function readAllLocal(): InspirationImage[] {
 }
 
 function saveLocal(weekKey: string, rows: InspirationImage[]) {
+  const persistedRows = rowsForWeek(weekKey, rows).map(stripTransientCardFields);
+  weekImageMemoryCache.set(weekKey, persistedRows);
   try {
     const all = JSON.parse(localStorage.getItem(localStorageKey) || "{}") as Record<string, InspirationImage[]>;
-    all[weekKey] = rowsForWeek(weekKey, rows).map(stripTransientCardFields);
+    all[weekKey] = persistedRows;
     localStorage.setItem(localStorageKey, JSON.stringify(all));
   } catch {
     // Large image collections can exceed browser storage quota; the API remains the source of truth.

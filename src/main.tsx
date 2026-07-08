@@ -121,7 +121,7 @@ function JournalApp() {
   const defaultTemplate = React.useMemo(() => readDefaultPromptTemplate(), []);
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [images, setImages] = React.useState<InspirationImage[]>([]);
-  const [weekLoading, setWeekLoading] = React.useState(false);
+  const [weekLoading, setWeekLoading] = React.useState(true);
   const [galleryImages, setGalleryImages] = React.useState<InspirationImage[]>([]);
   const [activeCard, setActiveCard] = React.useState<InspirationImage | null>(null);
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
@@ -603,11 +603,18 @@ function JournalApp() {
     const weekRows = rowsForWeek(weekKey, images);
     const targetDayIndex = autoCenterDayIndex(weekDates, weekRows);
     const centerKey = `${weekKey}:${uiStyle}`;
-    if (!viewport || uiStyle === "gallery" || targetDayIndex < 0 || centeredWeekRef.current === centerKey) return;
+    const targetContentLoaded = weekRows.some((row) => row.dayIndex === targetDayIndex);
+    if (
+      !viewport ||
+      uiStyle === "gallery" ||
+      targetDayIndex < 0 ||
+      (weekLoading && !targetContentLoaded) ||
+      centeredWeekRef.current === centerKey
+    ) return;
 
     centeredWeekRef.current = centerKey;
     centerDayContent(targetDayIndex);
-  }, [canvasScale, images, uiStyle, weekDates, weekKey]);
+  }, [canvasScale, images, uiStyle, weekDates, weekKey, weekLoading]);
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current;

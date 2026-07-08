@@ -124,6 +124,8 @@ function JournalApp() {
   const [images, setImages] = React.useState<InspirationImage[]>([]);
   const [weekLoading, setWeekLoading] = React.useState(true);
   const [galleryImages, setGalleryImages] = React.useState<InspirationImage[]>([]);
+  const [galleryHydrated, setGalleryHydrated] = React.useState(false);
+  const [initialViewportReady, setInitialViewportReady] = React.useState(false);
   const [activeCard, setActiveCard] = React.useState<InspirationImage | null>(null);
   const [pending, setPending] = React.useState<Record<string, boolean>>({});
   const [uiStyle, setUiStyle] = React.useState<UiStyle>(() => readUiStyle());
@@ -556,9 +558,10 @@ function JournalApp() {
 
   React.useEffect(() => {
     if (uiStyle !== "gallery") return;
+    setGalleryHydrated(false);
     const deletedIds = currentDeletedCards(deletedCardIdsRef);
     setGalleryImages(readAllLocal().filter((row) => !deletedIds.has(row.id)).map(resolveLegacyCard));
-    void loadAllImages().then(setGalleryImages);
+    void loadAllImages().then(setGalleryImages).finally(() => setGalleryHydrated(true));
   }, [uiStyle]);
 
   React.useEffect(() => {
@@ -615,14 +618,17 @@ function JournalApp() {
 
     centeredWeekRef.current = centerKey;
     centerDayContent(targetDayIndex);
+    if (!initialViewportReady) setInitialViewportReady(true);
   }, [canvasScale, images, uiStyle, weekDates, weekKey, weekLoading]);
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || uiStyle !== "gallery") return;
+    if (!galleryHydrated && galleryImages.length === 0) return;
 
     centerGalleryContent();
-  }, [canvasScale, galleryImages.length, uiStyle]);
+    if (!initialViewportReady) setInitialViewportReady(true);
+  }, [canvasScale, galleryHydrated, galleryImages.length, uiStyle]);
 
   React.useEffect(() => {
     localStorage.setItem("journal-prompt-template", promptTemplate);
@@ -1419,6 +1425,7 @@ function JournalApp() {
           ref={viewportRef}
           className={cn(
             "canvas-viewport h-screen overflow-auto px-0 pb-8 pt-[76px]",
+            !initialViewportReady && "invisible",
             searchMode && searchQuery.trim() && "pointer-events-none fixed inset-0 opacity-0"
           )}
           onDoubleClick={(event) => {

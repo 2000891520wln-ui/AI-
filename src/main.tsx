@@ -22,6 +22,10 @@ import { Button } from "./components/ui/button";
 import { cn } from "./lib/utils";
 import "./styles.css";
 
+if ("scrollRestoration" in window.history) {
+  window.history.scrollRestoration = "manual";
+}
+
 type Decoration = {
   tape: string;
   pin: string;
@@ -618,7 +622,7 @@ function JournalApp() {
 
     centeredWeekRef.current = centerKey;
     centerDayContent(targetDayIndex);
-    if (!initialViewportReady) setInitialViewportReady(true);
+    setInitialViewportReady(true);
   }, [canvasScale, images, uiStyle, weekDates, weekKey, weekLoading]);
 
   React.useLayoutEffect(() => {
@@ -627,7 +631,7 @@ function JournalApp() {
     if (!galleryHydrated && galleryImages.length === 0) return;
 
     centerGalleryContent();
-    if (!initialViewportReady) setInitialViewportReady(true);
+    setInitialViewportReady(true);
   }, [canvasScale, galleryHydrated, galleryImages.length, uiStyle]);
 
   React.useEffect(() => {
@@ -1251,6 +1255,7 @@ function JournalApp() {
     activeWeekKeyRef.current = nextWeekKey;
     weekLoadSequenceRef.current += 1;
     centeredWeekRef.current = null;
+    setInitialViewportReady(false);
     setWeekLoading(true);
     if (uiStyle !== "gallery") setImages(cachedRows);
     setWeekOffset(nextOffset);
@@ -1277,12 +1282,17 @@ function JournalApp() {
     setSearchResults([]);
     setSearchSuggestions([]);
     setSearchLoading(false);
+    setInitialViewportReady(false);
     if (weekOffset !== 0) navigateToWeekOffset(0);
     if (uiStyle === "gallery") {
       setGalleryDepth(0);
-      scheduleCenter(centerGalleryContent);
+      scheduleCenter(() => {
+        centerGalleryContent();
+        setInitialViewportReady(true);
+      });
     } else if (weekOffset === 0) {
-      scheduleCenter(centerTodayContent);
+      centerTodayContent();
+      setInitialViewportReady(true);
     }
   }
 

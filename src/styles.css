@@ -859,6 +859,7 @@ body {
 
 .canvas-viewport {
   cursor: default;
+  overflow-anchor: none;
 }
 
 .line-clamp-6 {
